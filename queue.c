@@ -8,6 +8,23 @@ int elem_isolated(queue_t *elem){
 	return 0;
 }
 
+int elem_in_queue (queue_t *elem, queue_t *queue){
+	queue_t *aux;
+	int size;
+
+	aux = elem;
+	size = queue_size(queue);
+	
+	for (int i = 0; i < size; i++) {
+		if (aux == queue)
+			return 1;
+
+		aux = aux->next;
+	}
+
+	return 0;
+}
+
 int queue_empty(queue_t *queue){
 	if (!queue_size(queue))
 		return 1;
@@ -95,9 +112,11 @@ int queue_remove(queue_t **queue, queue_t *elem){
 		return -5;
 	}
 
-	/* Checar se elemento pertence a lista
-		*
-	*/
+	// Verifica se o elemento pertence a lista
+	if (!elem_in_queue(elem, *queue)){
+		return -6;
+	}
+
 
 	elem->next->prev = elem->prev;
 	elem->prev->next = elem->next;
