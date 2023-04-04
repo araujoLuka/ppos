@@ -1,7 +1,8 @@
 #include "queue.h"
+#include <stdio.h>
 
 int elem_isolated(queue_t *elem){
-	if (elem->prev || elem->next)
+	if (!elem->prev && !elem->next)
 		return 1;
 	
 	return 0;
@@ -17,12 +18,14 @@ int queue_empty(queue_t *queue){
 int queue_size(queue_t *queue){
 	int i;
 	queue_t *aux;
-
-	i = 0;
+	
 	aux = queue;
 
-	while (aux) {
-		i++;
+	if (!aux)
+		return 0;
+	
+	aux = aux->next;
+	for (i = 1; aux != queue; i++) {
 		aux = aux->next;
 	}
 
@@ -43,7 +46,7 @@ int queue_append(queue_t **queue, queue_t *elem){
 	queue_t *aux;
 	int size;
 
-	if (!(*queue)){
+	if (!queue){
 		return -1;
 	}
 
@@ -76,10 +79,7 @@ int queue_append(queue_t **queue, queue_t *elem){
 }
 
 int queue_remove(queue_t **queue, queue_t *elem){
-	queue_t *aux;
-	int size;
-	
-	if (!(*queue)){
+	if (!queue){
 		return -1;
 	}
 
@@ -108,7 +108,7 @@ int queue_remove(queue_t **queue, queue_t *elem){
 	elem->next = NULL;
 	elem->prev = NULL;
 
-	if (queue_empty(*queue))
+	if (elem_isolated(*queue))
 		*queue = NULL;
 
 	return 0;
