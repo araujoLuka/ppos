@@ -54,9 +54,20 @@ void queue_print(char *name, queue_t *queue, void (*print_elem)(void *)){
 
 	aux = queue;
 
-	while (aux) {
+	printf("%s: [", name);
+	
+	if (aux){
 		print_elem(aux);
+		aux = aux->next;
+
+		while (aux != queue) {
+			printf(" ");
+			print_elem(aux);
+			aux = aux->next;
+		}
 	}
+
+	printf("]\n");
 }
 
 int queue_append(queue_t **queue, queue_t *elem){
@@ -116,7 +127,6 @@ int queue_remove(queue_t **queue, queue_t *elem){
 	if (!elem_in_queue(elem, *queue)){
 		return -6;
 	}
-
 
 	elem->next->prev = elem->prev;
 	elem->prev->next = elem->next;
