@@ -1,21 +1,25 @@
-CFLAGS = -Wall -Wextra -g
+CFLAGS = -Wall -g
 
-OBJECTS = queue.o testafila.o
-PROGRAM = main
+OBJECTS = queue.o ppos_core.o
+PROGRAMS = pingpong-tasks1 pingpong-tasks2 pingpong-tasks3
 
-all: ${PROGRAM}
+all: ${PROGRAMS}
 
-main: ${OBJECTS}
-	gcc -o ${PROGRAM} ${CFLAGS} ${OBJECTS}
+debug:
+	make CPPFLAGS='-DDEBUG' all
 
-queue.o: queue.c queue.h
-	gcc -c queue.c ${CFLAGS}
+test_q: queue.o
+	cc ${CFLAGS}   -o $@ $? tests/testafila.c
 
-testafila.o: testafila.c
-	gcc -c testafila.c
+pingpong-tasks1: ${OBJECTS}
+pingpong-tasks2: ${OBJECTS}
+pingpong-tasks3: ${OBJECTS}
+
+queue.o: 	 queue.c queue.h
+ppos_core.o: ppos_core.c ppos_data.h ppos.h
 
 clean:
 	-rm -f ${OBJECTS}
 
 purge: clean
-	-rm -f ${PROGRAM}
+	-rm -f ${PROGRAMS} test_q
