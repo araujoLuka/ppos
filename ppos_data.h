@@ -59,6 +59,9 @@ typedef struct
 // armazena as informacoes da tarefa principal (main)
 extern task_t tsk_main;
 
+// armazena as informacoes da tarefa despachante (dispatcher)
+extern task_t tsk_disp;
+
 // ponteiro para a tarefa atual
 extern task_t *tsk_curr;
 
@@ -67,6 +70,9 @@ extern int id_new;
 
 // armazena o ultimo id usado em uma tarefa
 extern int id_last;
+
+// ponteiro para a fila de tarefas
+extern queue_t *q_tasks;
 
 #define STACKSIZE 64*1024	/* tamanho de pilha das threads */
 

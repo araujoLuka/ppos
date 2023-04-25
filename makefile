@@ -1,7 +1,7 @@
 CFLAGS = -Wall -g
 
 OBJECTS = queue.o ppos_core.o
-PROGRAMS = pingpong-tasks1 pingpong-tasks2 pingpong-tasks3
+PROGRAMS = pingpong-tasks1 pingpong-tasks2 pingpong-tasks3 pingpong-dispatcher
 
 all: ${PROGRAMS}
 
@@ -14,6 +14,7 @@ test_q: queue.o
 pingpong-tasks1: ${OBJECTS}
 pingpong-tasks2: ${OBJECTS}
 pingpong-tasks3: ${OBJECTS}
+pingpong-dispatcher: ${OBJECTS}
 
 queue.o: 	 queue.c queue.h
 ppos_core.o: ppos_core.c ppos_data.h ppos.h
