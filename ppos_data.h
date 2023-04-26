@@ -27,6 +27,8 @@ typedef struct task_t
   int id ;				// identificador da tarefa
   ucontext_t context ;			// contexto armazenado da tarefa
   status_e status ;			// pronta, rodando, suspensa, ...
+  signed char p_sta ;		// valor de prioridade estatica da tarefa
+  signed char p_din ;		// valor de prioridade dinamica da tarefa
   // ... (outros campos serão adicionados mais tarde)
 } task_t ;
 
@@ -74,7 +76,18 @@ extern int id_last;
 // ponteiro para a fila de tarefas
 extern queue_t *q_tasks;
 
+// Constantes =======================================================
+
+#define ID_MAIN 0			/* numero identificador da tarefa principal */
+#define ID_DISP 1			/* numero identificador da tarefa despachante */
+
 #define STACKSIZE 64*1024	/* tamanho de pilha das threads */
+
+#define DEFAULT_PRIORITY 0	/* prioridade de tarefas padrao */
+#define MIN_PRIORITY -20	/* limite minimo para prioridade de tarefas */
+#define MAX_PRIORITY  20	/* limite maximo para prioridade de tarefas */
+
+#define AGING_ALPHA -1		/* parametro para modificar prioridade de tarefas */
 
 #endif
 

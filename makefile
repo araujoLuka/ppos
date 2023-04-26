@@ -1,26 +1,49 @@
+# PingPongOS - PingPong Operating System
+# 'makefile'
+#
+# Autor: Lucas Correia de Araujo
+# Disciplina: Sistema Operacionais (CI1215)
+# Professor: Carlos A. Maziero, DINF UFPR
+#
+# Abril de 2023
+# Regras:
+#   all ; debug ; tests ; tar ; clean ; purge
+
+# Variaveis make
 CFLAGS = -Wall -g
-
 OBJECTS = queue.o ppos_core.o
-PROGRAMS = pingpong-tasks1 pingpong-tasks2 pingpong-tasks3 pingpong-dispatcher
+PROGRAMS = $(patsubst %.c, %, $(wildcard pingpong*.c))
+TESTS = $(patsubst %.c, %, $(wildcard tests/*.c))
 
-all: ${PROGRAMS}
+# Regra para arquivos objeto
+%.o: %.c
+	$(CC) $(CFLAGS) -c $< -o $@
 
-debug:
-	make CPPFLAGS='-DDEBUG' all
+# Regras principais
+all: $(PROGRAMS)
+$(PROGRAMS): $(OBJECTS)
 
-test_q: queue.o
-	cc ${CFLAGS}   -o $@ $? tests/testafila.c
+# Regras para definir debug
+debug: CFLAGS += -DDEBUG
+debug: tests
+debug: all
 
-pingpong-tasks1: ${OBJECTS}
-pingpong-tasks2: ${OBJECTS}
-pingpong-tasks3: ${OBJECTS}
-pingpong-dispatcher: ${OBJECTS}
+# Regras para gerar binarios com codigos de teste
+tests: $(OBJECTS) $(TESTS) 
+tests/%: tests/%.c *.h
+	$(CC) $(CFLAGS) $(OBJECTS) $(@:%=%.c) -o $(@:tests/%=%)
 
-queue.o: 	 queue.c queue.h
-ppos_core.o: ppos_core.c ppos_data.h ppos.h
+tar:
+	mkdir ppos
+	cp $(wildcard *.c) $(wildcard *.h) makefile ppos/
+	-tar -czvf ppos.tar.gz ppos
+	-rm -r ppos/
 
+# Regra para excluir arquivos temporarios
 clean:
-	-rm -f ${OBJECTS}
+	-rm -f $(OBJECTS) *.tar.gz
 
+# Regra para excluir todos os arquivos gerado pelo make
 purge: clean
-	-rm -f ${PROGRAMS} test_q
+	-rm -f $(PROGRAMS)
+	-rm -f $(TESTS:tests/%=%)

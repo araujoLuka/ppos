@@ -6,7 +6,7 @@
 
 #include <stdio.h>
 #include <stdlib.h>
-#include "ppos.h"
+#include "../ppos.h"
 
 task_t Pang, Peng, Ping, Pong, Pung ;
 
