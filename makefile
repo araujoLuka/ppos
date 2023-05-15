@@ -25,7 +25,6 @@ $(PROGRAMS): $(OBJECTS)
 
 # Regras para definir debug
 debug: CFLAGS += -DDEBUG
-debug: tests
 debug: all
 
 # Regras para gerar binarios com codigos de teste
