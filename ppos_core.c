@@ -14,9 +14,9 @@
 #include "queue.h"
 #include <stdio.h>
 
-task_t tsk_main, tsk_disp, *tsk_curr;
+// Variaveis globais
+manager_t tm;
 int id_new, id_last;
-queue_t *q_tasks;
 
 //------------------------------------------------------------------------------
 // Retorna um ponteiro para a tarefa com maior prioridade e envelhece as demais
@@ -49,11 +49,11 @@ task_t *scheduler ()
 {
 	task_t *t;
 
-	if (q_tasks == NULL)
+	if (tm.q_tasks == NULL)
 		return NULL;
 
 	// esquema de task aging
-	t = task_select_and_aging((task_t*)q_tasks);
+	t = task_select_and_aging((task_t*)tm.q_tasks);
 
 	#ifdef DEBUG
 	printf("PPOS: scheduler > selected task %d (priority d:%d - e:%d)\n", t->id, t->p_din, t->p_sta);
@@ -69,18 +69,18 @@ task_t *scheduler ()
 		case RUNNING:
 			fprintf(stderr, "ERROR: catched a running task in scheduler function\n");
 			t->status = READY;
-			q_tasks = q_tasks->next;
+			tm.q_tasks = tm.q_tasks->next;
 			break;
 
 		case SUSPENDED:
 			fprintf(stderr, "ERROR: catched a suspended task in scheduler function\n");
 			t->status = READY;
-			q_tasks = q_tasks->next;
+			tm.q_tasks = tm.q_tasks->next;
 			break;
 
 		case TERMINATED:
 			fprintf(stderr, "ERROR: catched a terminated task in tasks queue\n");
-			queue_remove(&q_tasks, (queue_t*)t);
+			queue_remove(&tm.q_tasks, (queue_t*)t);
 			break;	
 	}
 
@@ -99,7 +99,7 @@ void dispatcher ()
 	#endif
 	
 	// enquanto houverem tarefas de usuário
-	while (queue_size(q_tasks) > 0) 
+	while (queue_size(tm.q_tasks) > 0) 
 	{
 		#ifdef DEBUG
 		printf("PPOS: dispatcher > selecting next task\n");
@@ -121,7 +121,7 @@ void dispatcher ()
 					#ifdef DEBUG
 					printf("PPOS: dispatcher > removed task %d from queue and freed memory\n", next->id);
 					#endif
-					queue_remove(&q_tasks, (queue_t*)next);
+					queue_remove(&tm.q_tasks, (queue_t*)next);
 					free(next->context.uc_stack.ss_sp);
 					break;
 
@@ -151,18 +151,18 @@ void main_init (task_t *m)
 	#endif /* DEBUG */
 
 	if (m == NULL)
-		m = &tsk_main;
+		m = &tm.tsk_main;
 
 	ucontext_t a;
 	getcontext(&a);
 
-	tsk_main.id = ID_MAIN;
-	tsk_main.context = a;
-	tsk_main.next = NULL;
-	tsk_main.prev = NULL;
-	tsk_main.status = RUNNING;
-	tsk_main.p_sta = DEFAULT_PRIORITY;
-	tsk_main.p_din = task_getprio(m);
+	tm.tsk_main.id = ID_MAIN;
+	tm.tsk_main.context = a;
+	tm.tsk_main.next = NULL;
+	tm.tsk_main.prev = NULL;
+	tm.tsk_main.status = RUNNING;
+	tm.tsk_main.p_sta = DEFAULT_PRIORITY;
+	tm.tsk_main.p_din = task_getprio(m);
 }
 
 //------------------------------------------------------------------------------
@@ -174,20 +174,21 @@ void ppos_init ()
 	printf("PPOS: ppos_init > system initialized\n");
 	#endif /* DEBUG */
 
-	main_init(&tsk_main);
-	tsk_curr = &tsk_main;
+	main_init(&tm.tsk_main);
+	tm.tsk_curr = &tm.tsk_main;
 
-	id_last = tsk_main.id;
-	id_new = tsk_main.id + 1;
+	id_last = tm.tsk_main.id;
+	id_new = tm.tsk_main.id + 1;
 
 	setvbuf(stdout, 0, _IONBF, 0);
 
-	task_init(&tsk_disp, dispatcher, NULL);
+	task_init(&tm.tsk_disp, dispatcher, NULL);
 }
 
 // Gerência de tarefas =========================================================
 
-
+//------------------------------------------------------------------------------
+// Aloca memoria para o contexto da tarefa
 
 int task_create_stack(task_t *task)
 {
@@ -245,7 +246,7 @@ int task_init (task_t *task, void (*start_func)(void *), void *arg)
 	
 	if (task->id != ID_DISP)
 		// insere a tarefa na fila de execucao
-		queue_append(&q_tasks, (queue_t*)task);
+		queue_append(&tm.q_tasks, (queue_t*)task);
 
 	task->status = READY;
 	task->p_sta = DEFAULT_PRIORITY;
@@ -260,7 +261,7 @@ int task_init (task_t *task, void (*start_func)(void *), void *arg)
 
 int task_id ()
 {
-	return tsk_curr->id;
+	return tm.tsk_curr->id;
 }
 
 //------------------------------------------------------------------------------
@@ -272,7 +273,7 @@ void task_exit (int exit_code)
 	printf("PPOS: task_exit > exiting task %d\n", task_id());
 	#endif /* DEBUG */
 
-	tsk_curr->status = TERMINATED;
+	tm.tsk_curr->status = TERMINATED;
 	
 	switch (task_id())
 	{
@@ -281,7 +282,7 @@ void task_exit (int exit_code)
 			break;
 
 		default:
-			task_switch(&tsk_disp);
+			task_switch(&tm.tsk_disp);
 	}
 }
 
@@ -310,11 +311,11 @@ int task_switch (task_t *task)
 	
 	task->status = RUNNING;
 
-	if (tsk_curr->status != TERMINATED)
-		tsk_curr->status = READY;
+	if (tm.tsk_curr->status != TERMINATED)
+		tm.tsk_curr->status = READY;
 	
-	tmp = tsk_curr;
-	tsk_curr = task;
+	tmp = tm.tsk_curr;
+	tm.tsk_curr = task;
 
 	swapcontext(&tmp->context, &task->context);
 
@@ -328,8 +329,8 @@ int task_switch (task_t *task)
 
 void task_yield ()
 {
-	q_tasks = q_tasks->next;
-	task_switch(&tsk_disp);
+	tm.q_tasks = tm.q_tasks->next;
+	task_switch(&tm.tsk_disp);
 }
 
 //------------------------------------------------------------------------------
@@ -344,7 +345,7 @@ void task_setprio (task_t *task, int prio)
 		prio = MIN_PRIORITY;
 
 	if (task == NULL)
-		task = tsk_curr;
+		task = tm.tsk_curr;
 	
 	task->p_sta = prio;
 	if (task->p_din < prio)
@@ -357,7 +358,7 @@ void task_setprio (task_t *task, int prio)
 int task_getprio (task_t *task)
 {
 	if (task == NULL)
-		task = tsk_curr;
+		task = tm.tsk_curr;
 		
 	return task->p_sta;
 }

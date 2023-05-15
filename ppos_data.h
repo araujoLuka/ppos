@@ -58,23 +58,20 @@ typedef struct
 
 // Variaveis globais ================================================
 
-// armazena as informacoes da tarefa principal (main)
-extern task_t tsk_main;
-
-// armazena as informacoes da tarefa despachante (dispatcher)
-extern task_t tsk_disp;
-
-// ponteiro para a tarefa atual
-extern task_t *tsk_curr;
+// estrutura para gestao de tarefas
+typedef struct task_manager
+{
+	task_t tsk_main;		// armazena as informacoes da tarefa principal (main)
+	task_t tsk_disp;		// armazena as informacoes da tarefa despachante (dispatcher)
+	task_t *tsk_curr;		// ponteiro para a tarefa atual
+	queue_t *q_tasks;		// ponteiro para a fila de tarefas
+} manager_t;
 
 // armazena o id que sera usado para uma nova tarefa
 extern int id_new;
 
 // armazena o ultimo id usado em uma tarefa
 extern int id_last;
-
-// ponteiro para a fila de tarefas
-extern queue_t *q_tasks;
 
 // Constantes =======================================================
 
@@ -90,4 +87,3 @@ extern queue_t *q_tasks;
 #define AGING_ALPHA -1		/* parametro para modificar prioridade de tarefas */
 
 #endif
-
