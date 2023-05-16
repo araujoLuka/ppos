@@ -17,6 +17,9 @@
 // Variaveis globais
 manager_t tm;
 int id_new, id_last;
+int kernel_lock = 0;
+struct sigaction action;
+struct itimerval timer;
 
 //------------------------------------------------------------------------------
 // Retorna um ponteiro para a tarefa com maior prioridade e envelhece as demais
@@ -111,6 +114,9 @@ void dispatcher ()
 		// escalonador escolher uma tarefa
 		if (next != NULL)
 		{
+			// reseta o quantum da terafa a receber o processador
+			next->quantum = DEFAULT_QUANTUM;
+
 			// transfere o controle para a proxima tarefa
 			task_switch(next);
 
@@ -142,6 +148,58 @@ void dispatcher ()
 }
 
 //------------------------------------------------------------------------------
+// Tratador de ticks
+
+void tick_handler ()
+{
+	if (kernel_lock)
+		return;
+
+	if (tm.tsk_curr->quantum <= 0)
+	{
+		#ifdef DEBUG
+		printf("PPOS: tick_handler > task %d finished quantum\n", task_id());
+		#endif /* DEBUG */
+		task_yield();
+	}
+
+	tm.tsk_curr->quantum -= tm.tsk_curr->user_task;
+}
+
+//------------------------------------------------------------------------------
+// Inicializador para programar os ticks do sistema em 1000ms
+
+void timer_init ()
+{
+	#ifdef DEBUG
+	printf("PPOS: timer_init > creating tick interruptions with %d ms freq\n", TICK_FREQ_IN_MS / 1000);
+	#endif /* DEBUG */
+
+	// registra a ação para o sinal de timer SIGALRM (sinal do timer)
+	action.sa_handler = tick_handler ;
+	sigemptyset (&action.sa_mask) ;
+	action.sa_flags = 0 ;
+	if (sigaction (SIGALRM, &action, 0) < 0)
+	{
+		perror ("Erro em sigaction: ") ;
+		exit (1) ;
+	}
+
+	// ajusta valores do temporizador
+	timer.it_value.tv_usec = TICK_FREQ_IN_MS * 1000 ;	// primeiro disparo, em micro-segundos
+	timer.it_value.tv_sec  = 0 ;			// primeiro disparo, em segundos
+	timer.it_interval.tv_usec = TICK_FREQ_IN_MS * 1000;	// disparos subsequentes, em micro-segundos
+	timer.it_interval.tv_sec  = 0 ;		// disparos subsequentes, em segundos
+
+	// arma o temporizador ITIMER_REAL
+	if (setitimer (ITIMER_REAL, &timer, 0) < 0)
+	{
+		perror ("Erro em setitimer: ") ;
+		exit (1) ;
+	}
+}
+
+//------------------------------------------------------------------------------
 // Cria a estrutura de tarefa para o programa principal (main)
 
 void main_init (task_t *m)
@@ -163,6 +221,8 @@ void main_init (task_t *m)
 	tm.tsk_main.status = RUNNING;
 	tm.tsk_main.p_sta = DEFAULT_PRIORITY;
 	tm.tsk_main.p_din = task_getprio(m);
+	tm.tsk_main.quantum = DEFAULT_QUANTUM;
+	tm.tsk_main.user_task = 1;
 }
 
 //------------------------------------------------------------------------------
@@ -182,7 +242,11 @@ void ppos_init ()
 
 	setvbuf(stdout, 0, _IONBF, 0);
 
+	timer_init();
+
 	task_init(&tm.tsk_disp, dispatcher, NULL);
+	tm.tsk_disp.quantum = 99;
+	tm.tsk_disp.user_task = 0;
 }
 
 // Gerência de tarefas =========================================================
@@ -251,6 +315,8 @@ int task_init (task_t *task, void (*start_func)(void *), void *arg)
 	task->status = READY;
 	task->p_sta = DEFAULT_PRIORITY;
 	task->p_din = task_getprio(task);
+	task->quantum = DEFAULT_QUANTUM;
+	task->user_task = 1;
 	id_last = task->id;
 
 	return task->id;
@@ -291,17 +357,20 @@ void task_exit (int exit_code)
 
 int task_switch (task_t *task)
 {
-	task_t *tmp;
+	kernel_lock = 1;
+	task_t *old;
 
 	if (task == NULL)
 	{
 		fprintf(stderr, "ERROR: cannot switch to a null task\n");
+		kernel_lock = 0;
 		return -1;
 	}
 
 	if (task->id == task_id())
 	{
 		fprintf(stderr, "ERROR: cannot switch to the same task\n");
+		kernel_lock = 0;
 		return -2;
 	}
 
@@ -310,14 +379,15 @@ int task_switch (task_t *task)
 	#endif /* DEBUG */
 	
 	task->status = RUNNING;
-
-	if (tm.tsk_curr->status != TERMINATED)
-		tm.tsk_curr->status = READY;
 	
-	tmp = tm.tsk_curr;
+	old = tm.tsk_curr;
 	tm.tsk_curr = task;
 
-	swapcontext(&tmp->context, &task->context);
+	if (old->status != TERMINATED)
+		old->status = READY;
+
+	kernel_lock = 0;
+	swapcontext(&old->context, &task->context);
 
 	return 0;
 }
@@ -329,8 +399,10 @@ int task_switch (task_t *task)
 
 void task_yield ()
 {
+	kernel_lock = 1;
 	tm.q_tasks = tm.q_tasks->next;
 	task_switch(&tm.tsk_disp);
+	kernel_lock = 0;
 }
 
 //------------------------------------------------------------------------------
