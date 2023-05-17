@@ -33,6 +33,9 @@ typedef struct task_t
 	signed char p_din ;			// valor de prioridade dinamica da tarefa
 	unsigned char quantum ;		// fatia de tempo para tarefa executar
 	unsigned char user_task ;	// se tarefa de usuario entao 1, senao 0
+	unsigned int proc_time ;
+	unsigned int exec_time ;
+	unsigned int activations ;
   // ... (outros campos serão adicionados mais tarde)
 } task_t ;
 
@@ -85,6 +88,9 @@ extern struct itimerval timer;
 
 // bloqueador de interrupcao de ticks
 extern int kernel_lock;
+
+// temporizador 
+extern unsigned int sys_timer;
 
 // Constantes =======================================================
 

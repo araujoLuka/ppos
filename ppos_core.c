@@ -1,8 +1,8 @@
+// Lucas Correia de Araujo - GRR 20206150
 // PingPongOS - PingPong Operating System
 // 'ppos_core.c'
 // -- Codigo nucleo do sistema operacional
 //
-// Autor: Lucas Correia de Araujo
 // Disciplina: Sistema Operacionais (CI1215)
 // Professor: Carlos A. Maziero, DINF UFPR
 //
@@ -17,9 +17,10 @@
 // Variaveis globais
 manager_t tm;
 int id_new, id_last;
-int kernel_lock = 0;
 struct sigaction action;
 struct itimerval timer;
+int kernel_lock = 0;
+unsigned int sys_timer = 0;
 
 //------------------------------------------------------------------------------
 // Retorna um ponteiro para a tarefa com maior prioridade e envelhece as demais
@@ -147,6 +148,11 @@ void dispatcher ()
 	task_exit(0);
 }
 
+unsigned int systime()
+{
+	return sys_timer;
+}
+
 //------------------------------------------------------------------------------
 // Tratador de ticks
 
@@ -163,6 +169,8 @@ void tick_handler ()
 		task_yield();
 	}
 
+	sys_timer++;
+	tm.tsk_curr->proc_time++;
 	tm.tsk_curr->quantum -= tm.tsk_curr->user_task;
 }
 
@@ -223,6 +231,9 @@ void main_init (task_t *m)
 	tm.tsk_main.p_din = task_getprio(m);
 	tm.tsk_main.quantum = DEFAULT_QUANTUM;
 	tm.tsk_main.user_task = 1;
+	tm.tsk_main.proc_time = 0;
+	tm.tsk_main.exec_time = systime();
+	tm.tsk_main.activations = 1;
 }
 
 //------------------------------------------------------------------------------
@@ -317,6 +328,10 @@ int task_init (task_t *task, void (*start_func)(void *), void *arg)
 	task->p_din = task_getprio(task);
 	task->quantum = DEFAULT_QUANTUM;
 	task->user_task = 1;
+	task->proc_time = 0;
+	task->exec_time = systime();
+	task->activations = 0;
+
 	id_last = task->id;
 
 	return task->id;
@@ -340,6 +355,13 @@ void task_exit (int exit_code)
 	#endif /* DEBUG */
 
 	tm.tsk_curr->status = TERMINATED;
+	tm.tsk_curr->exec_time = systime() - tm.tsk_curr->exec_time;
+	printf("Task %d exit: execution time %d ms, processor time %d ms, %d activations\n",
+				task_id(),
+				tm.tsk_curr->exec_time,
+				tm.tsk_curr->proc_time,
+				tm.tsk_curr->activations
+	);
 	
 	switch (task_id())
 	{
@@ -386,6 +408,7 @@ int task_switch (task_t *task)
 	if (old->status != TERMINATED)
 		old->status = READY;
 
+	task->activations++;
 	kernel_lock = 0;
 	swapcontext(&old->context, &task->context);
 
