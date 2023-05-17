@@ -6,90 +6,144 @@
 // Disciplina: Sistema Operacionais (CI1215)
 // Professor: Carlos A. Maziero, DINF UFPR
 //
-// Abril de 2023
+// Maio de 2023
 // Funcoes e operacoes internas do sistema
 
 #include "ppos.h"
 #include "ppos_data.h"
-#include "queue.h"
-#include <stdio.h>
 
-// Variaveis globais
-manager_t tm;
-int id_new, id_last;
-struct sigaction action;
-struct itimerval timer;
-int kernel_lock = 0;
-unsigned int sys_timer = 0;
+// Estruturas globais
+tsk_manager_t tsk;
+tmr_manager_t tmr;
 
-//------------------------------------------------------------------------------
-// Retorna um ponteiro para a tarefa com maior prioridade e envelhece as demais
+// Prototipos para funcoes privadas
+task_t *task_select_and_aging (task_t *q);
+task_t *scheduler ();
+void dispatcher ();
+void tick_handler ();
+void timer_init ();
+void main_init (task_t *m);
+int task_create_stack (task_t *task);
 
-task_t *task_select_and_aging(task_t *q)
-{
-	task_t *t, *i;
-	t = q;
+// Start
 
-	for (i = t->next; i != q; i = i->next)
-	{
-		if (t->p_din > i->p_din)
-		{
-			t->p_din += AGING_ALPHA;
-			t = i;
-		}
-		else
-			i->p_din += AGING_ALPHA;
-	}
-
-	return t;
-}
+// Inicializador do sistema ====================================================
 
 //------------------------------------------------------------------------------
-// Escalonador de tarefas; 
-// retorna um ponteiro para a proxima tarefa a ser utilizada pelo processador
-// caso nao exista tarefa retorna NULL
+// Inicializa o sistema operacional; deve ser chamada no inicio do main()
 
-task_t *scheduler () 
+void ppos_init ()
 {
-	task_t *t;
-
-	if (tm.q_tasks == NULL)
-		return NULL;
-
-	// esquema de task aging
-	t = task_select_and_aging((task_t*)tm.q_tasks);
-
 	#ifdef DEBUG
-	printf("PPOS: scheduler > selected task %d (priority d:%d - e:%d)\n", t->id, t->p_din, t->p_sta);
-	#endif
+	printf("PPOS: ppos_init > system initialized\n");
+	#endif /* DEBUG */
 
-	t->p_din = task_getprio(t);
+	main_init(&tsk.t_main);
+	tsk.t_curr = &tsk.t_main;
 
-	switch (t->status)
+	tsk.id_last = tsk.t_main.id;
+	tsk.id_new = tsk.t_main.id + 1;
+
+	setvbuf(stdout, 0, _IONBF, 0);
+
+	timer_init();
+
+	task_init(&tsk.t_disp, dispatcher, NULL);
+	tsk.t_disp.quantum = 99;
+	tsk.t_disp.user_task = 0;
+}
+
+//------------------------------------------------------------------------------
+// Cria a estrutura de tarefa para o programa principal (main)
+
+void main_init (task_t *m)
+{
+	#ifdef DEBUG
+	printf("PPOS: main_init > created task struct to main task (id: %d)\n", ID_MAIN);
+	#endif /* DEBUG */
+
+	if (m == NULL)
+		m = &tsk.t_main;
+
+	ucontext_t a;
+	getcontext(&a);
+
+	tsk.t_main.id = ID_MAIN;
+	tsk.t_main.context = a;
+	tsk.t_main.next = NULL;
+	tsk.t_main.prev = NULL;
+	tsk.t_main.status = RUNNING;
+	tsk.t_main.p_sta = DEFAULT_PRIORITY;
+	tsk.t_main.p_din = task_getprio(m);
+	tsk.t_main.quantum = DEFAULT_QUANTUM;
+	tsk.t_main.user_task = 1;
+	tsk.t_main.proc_time = 0;
+	tsk.t_main.exec_time = systime();
+	tsk.t_main.activations = 1;
+}
+
+//------------------------------------------------------------------------------
+// Programa os ticks de interrupcoes do sistema no tempo dado por TICK_FREQ_IN_MS
+
+void timer_init ()
+{
+	#ifdef DEBUG
+	printf("PPOS: timer_init > creating tick interruptions with %d ms freq\n", TICK_FREQ_IN_MS / 1000);
+	#endif /* DEBUG */
+
+	// registra a ação para o sinal de timer SIGALRM (sinal do timer)
+	tmr.int_action.sa_handler = tick_handler ;
+	sigemptyset (&tmr.int_action.sa_mask) ;
+	tmr.int_action.sa_flags = 0 ;
+	if (sigaction (SIGALRM, &tmr.int_action, 0) < 0)
 	{
-		case READY:
-			return t;
-
-		case RUNNING:
-			fprintf(stderr, "ERROR: catched a running task in scheduler function\n");
-			t->status = READY;
-			tm.q_tasks = tm.q_tasks->next;
-			break;
-
-		case SUSPENDED:
-			fprintf(stderr, "ERROR: catched a suspended task in scheduler function\n");
-			t->status = READY;
-			tm.q_tasks = tm.q_tasks->next;
-			break;
-
-		case TERMINATED:
-			fprintf(stderr, "ERROR: catched a terminated task in tasks queue\n");
-			queue_remove(&tm.q_tasks, (queue_t*)t);
-			break;	
+		perror ("Erro em sigaction: ") ;
+		exit (1) ;
 	}
 
-	return NULL;
+	// ajusta valores do temporizador
+	tmr.int_timer.it_value.tv_usec = TICK_FREQ_IN_MS * 1000 ;	// primeiro disparo, em micro-segundos
+	tmr.int_timer.it_value.tv_sec  = 0 ;			// primeiro disparo, em segundos
+	tmr.int_timer.it_interval.tv_usec = TICK_FREQ_IN_MS * 1000;	// disparos subsequentes, em micro-segundos
+	tmr.int_timer.it_interval.tv_sec  = 0 ;		// disparos subsequentes, em segundos
+
+	// arma o temporizador ITIMER_REAL
+	if (setitimer (ITIMER_REAL, &tmr.int_timer, 0) < 0)
+	{
+		perror ("Erro em setitimer: ") ;
+		exit (1) ;
+	}
 }
+
+//------------------------------------------------------------------------------
+// Retorna o relógio atual (em milisegundos)
+
+unsigned int systime ()
+{
+	return tmr.sys_timer;
+}
+
+//------------------------------------------------------------------------------
+// Tratador de ticks
+
+void tick_handler ()
+{
+	if (tmr.kernel_lock)
+		return;
+
+	if (tsk.t_curr->quantum <= 0)
+	{
+		#ifdef DEBUG
+		printf("PPOS: tick_handler > task %d finished quantum\n", task_id());
+		#endif /* DEBUG */
+		task_yield();
+	}
+
+	tmr.sys_timer++;
+	tsk.t_curr->proc_time++;
+	tsk.t_curr->quantum -= tsk.t_curr->user_task;
+}
+// Controle de execucao de tarefas =============================================
 
 //------------------------------------------------------------------------------
 // Procedimento principal do despachante de tarefas
@@ -103,7 +157,7 @@ void dispatcher ()
 	#endif
 	
 	// enquanto houverem tarefas de usuário
-	while (queue_size(tm.q_tasks) > 0) 
+	while (queue_size(tsk.q_tasks) > 0) 
 	{
 		#ifdef DEBUG
 		printf("PPOS: dispatcher > selecting next task\n");
@@ -128,7 +182,7 @@ void dispatcher ()
 					#ifdef DEBUG
 					printf("PPOS: dispatcher > removed task %d from queue and freed memory\n", next->id);
 					#endif
-					queue_remove(&tm.q_tasks, (queue_t*)next);
+					queue_remove(&tsk.q_tasks, (queue_t*)next);
 					free(next->context.uc_stack.ss_sp);
 					break;
 
@@ -148,124 +202,126 @@ void dispatcher ()
 	task_exit(0);
 }
 
-unsigned int systime()
-{
-	return sys_timer;
-}
-
 //------------------------------------------------------------------------------
-// Tratador de ticks
+// Escalonador de tarefas; 
+// retorna um ponteiro para a proxima tarefa a ser utilizada pelo processador
+// caso nao exista tarefa retorna NULL
 
-void tick_handler ()
+task_t *scheduler () 
 {
-	if (kernel_lock)
-		return;
+	task_t *t;
 
-	if (tm.tsk_curr->quantum <= 0)
+	if (tsk.q_tasks == NULL)
+		return NULL;
+
+	// esquema de task aging
+	t = task_select_and_aging((task_t*)tsk.q_tasks);
+
+	#ifdef DEBUG
+	printf("PPOS: scheduler > selected task %d (priority d:%d - e:%d)\n", t->id, t->p_din, t->p_sta);
+	#endif
+
+	t->p_din = task_getprio(t);
+
+	switch (t->status)
 	{
-		#ifdef DEBUG
-		printf("PPOS: tick_handler > task %d finished quantum\n", task_id());
-		#endif /* DEBUG */
-		task_yield();
+		case READY:
+			return t;
+
+		case RUNNING:
+			fprintf(stderr, "ERROR: catched a running task in scheduler function\n");
+			t->status = READY;
+			tsk.q_tasks = tsk.q_tasks->next;
+			break;
+
+		case SUSPENDED:
+			fprintf(stderr, "ERROR: catched a suspended task in scheduler function\n");
+			t->status = READY;
+			tsk.q_tasks = tsk.q_tasks->next;
+			break;
+
+		case TERMINATED:
+			fprintf(stderr, "ERROR: catched a terminated task in tasks queue\n");
+			queue_remove(&tsk.q_tasks, (queue_t*)t);
+			break;	
 	}
 
-	sys_timer++;
-	tm.tsk_curr->proc_time++;
-	tm.tsk_curr->quantum -= tm.tsk_curr->user_task;
+	return NULL;
 }
 
 //------------------------------------------------------------------------------
-// Inicializador para programar os ticks do sistema em 1000ms
+// Retorna um ponteiro para a tarefa com maior prioridade e envelhece as demais
 
-void timer_init ()
+task_t *task_select_and_aging (task_t *q)
 {
-	#ifdef DEBUG
-	printf("PPOS: timer_init > creating tick interruptions with %d ms freq\n", TICK_FREQ_IN_MS / 1000);
-	#endif /* DEBUG */
+	task_t *t, *i;
+	t = q;
 
-	// registra a ação para o sinal de timer SIGALRM (sinal do timer)
-	action.sa_handler = tick_handler ;
-	sigemptyset (&action.sa_mask) ;
-	action.sa_flags = 0 ;
-	if (sigaction (SIGALRM, &action, 0) < 0)
+	for (i = t->next; i != q; i = i->next)
 	{
-		perror ("Erro em sigaction: ") ;
-		exit (1) ;
+		if (t->p_din > i->p_din)
+		{
+			t->p_din += AGING_ALPHA;
+			t = i;
+		}
+		else
+			i->p_din += AGING_ALPHA;
 	}
 
-	// ajusta valores do temporizador
-	timer.it_value.tv_usec = TICK_FREQ_IN_MS * 1000 ;	// primeiro disparo, em micro-segundos
-	timer.it_value.tv_sec  = 0 ;			// primeiro disparo, em segundos
-	timer.it_interval.tv_usec = TICK_FREQ_IN_MS * 1000;	// disparos subsequentes, em micro-segundos
-	timer.it_interval.tv_sec  = 0 ;		// disparos subsequentes, em segundos
-
-	// arma o temporizador ITIMER_REAL
-	if (setitimer (ITIMER_REAL, &timer, 0) < 0)
-	{
-		perror ("Erro em setitimer: ") ;
-		exit (1) ;
-	}
-}
-
-//------------------------------------------------------------------------------
-// Cria a estrutura de tarefa para o programa principal (main)
-
-void main_init (task_t *m)
-{
-	#ifdef DEBUG
-	printf("PPOS: main_init > created task struct to main task (id: %d)\n", ID_MAIN);
-	#endif /* DEBUG */
-
-	if (m == NULL)
-		m = &tm.tsk_main;
-
-	ucontext_t a;
-	getcontext(&a);
-
-	tm.tsk_main.id = ID_MAIN;
-	tm.tsk_main.context = a;
-	tm.tsk_main.next = NULL;
-	tm.tsk_main.prev = NULL;
-	tm.tsk_main.status = RUNNING;
-	tm.tsk_main.p_sta = DEFAULT_PRIORITY;
-	tm.tsk_main.p_din = task_getprio(m);
-	tm.tsk_main.quantum = DEFAULT_QUANTUM;
-	tm.tsk_main.user_task = 1;
-	tm.tsk_main.proc_time = 0;
-	tm.tsk_main.exec_time = systime();
-	tm.tsk_main.activations = 1;
-}
-
-//------------------------------------------------------------------------------
-// Inicializa o sistema operacional; deve ser chamada no inicio do main()
-
-void ppos_init ()
-{
-	#ifdef DEBUG
-	printf("PPOS: ppos_init > system initialized\n");
-	#endif /* DEBUG */
-
-	main_init(&tm.tsk_main);
-	tm.tsk_curr = &tm.tsk_main;
-
-	id_last = tm.tsk_main.id;
-	id_new = tm.tsk_main.id + 1;
-
-	setvbuf(stdout, 0, _IONBF, 0);
-
-	timer_init();
-
-	task_init(&tm.tsk_disp, dispatcher, NULL);
-	tm.tsk_disp.quantum = 99;
-	tm.tsk_disp.user_task = 0;
+	return t;
 }
 
 // Gerência de tarefas =========================================================
 
 //------------------------------------------------------------------------------
+// Inicializa uma nova tarefa. Retorna um ID> 0 ou erro.
+
+int task_init (task_t *task, void (*start_func)(void *), void *arg)
+{
+	if (task == NULL)
+	{
+		fprintf(stderr, "ERROR: cannot initialize a null task\n");
+		return -1;
+	}
+
+	task->id = tsk.id_new++;
+	#ifdef DEBUG
+	printf("PPOS: task_init > task %d created by task %d (func %p)\n", task->id, task_id(), start_func);
+	#endif /* DEBUG */
+
+	// salva as informacoes do contexto atual para
+	// ser usado como base do novo contexto
+	getcontext(&task->context);
+
+	// aloca espaco para a stack do contexto a ser criado
+	if (!task_create_stack(task))
+		return -2;
+
+	// cria o contexto da tarefa
+	makecontext(&task->context, (void*)(start_func), 1, arg);
+	
+	if (task->id != ID_DISP)
+		// insere a tarefa na fila de execucao
+		queue_append(&tsk.q_tasks, (queue_t*)task);
+
+	task->status = READY;
+	task->p_sta = DEFAULT_PRIORITY;
+	task->p_din = task_getprio(task);
+	task->quantum = DEFAULT_QUANTUM;
+	task->user_task = 1;
+	task->proc_time = 0;
+	task->exec_time = systime();
+	task->activations = 0;
+
+	tsk.id_last = task->id;
+
+	return task->id;
+}
+
+//------------------------------------------------------------------------------
 // Aloca memoria para o contexto da tarefa
 
-int task_create_stack(task_t *task)
+int task_create_stack (task_t *task)
 {
 	char *stack;
 
@@ -293,56 +349,11 @@ int task_create_stack(task_t *task)
 }
 
 //------------------------------------------------------------------------------
-// Inicializa uma nova tarefa. Retorna um ID> 0 ou erro.
-
-int task_init (task_t *task, void (*start_func)(void *), void *arg)
-{
-	if (task == NULL)
-	{
-		fprintf(stderr, "ERROR: cannot initialize a null task\n");
-		return -1;
-	}
-
-	task->id = id_new++;
-	#ifdef DEBUG
-	printf("PPOS: task_init > task %d created by task %d (func %p)\n", task->id, task_id(), start_func);
-	#endif /* DEBUG */
-
-	// salva as informacoes do contexto atual para
-	// ser usado como base do novo contexto
-	getcontext(&task->context);
-
-	// aloca espaco para a stack do contexto a ser criado
-	if (!task_create_stack(task))
-		return -2;
-
-	// cria o contexto da tarefa
-	makecontext(&task->context, (void*)(start_func), 1, arg);
-	
-	if (task->id != ID_DISP)
-		// insere a tarefa na fila de execucao
-		queue_append(&tm.q_tasks, (queue_t*)task);
-
-	task->status = READY;
-	task->p_sta = DEFAULT_PRIORITY;
-	task->p_din = task_getprio(task);
-	task->quantum = DEFAULT_QUANTUM;
-	task->user_task = 1;
-	task->proc_time = 0;
-	task->exec_time = systime();
-	task->activations = 0;
-
-	id_last = task->id;
-
-	return task->id;
-}
-
-//------------------------------------------------------------------------------
 // Retorna o identificador da tarefa corrente (main deve ser 0)
 
 int task_id ()
 {
-	return tm.tsk_curr->id;
+	return tsk.t_curr->id;
 }
 
 //------------------------------------------------------------------------------
@@ -354,13 +365,13 @@ void task_exit (int exit_code)
 	printf("PPOS: task_exit > exiting task %d\n", task_id());
 	#endif /* DEBUG */
 
-	tm.tsk_curr->status = TERMINATED;
-	tm.tsk_curr->exec_time = systime() - tm.tsk_curr->exec_time;
+	tsk.t_curr->status = TERMINATED;
+	tsk.t_curr->exec_time = systime() - tsk.t_curr->exec_time;
 	printf("Task %d exit: execution time %d ms, processor time %d ms, %d activations\n",
 				task_id(),
-				tm.tsk_curr->exec_time,
-				tm.tsk_curr->proc_time,
-				tm.tsk_curr->activations
+				tsk.t_curr->exec_time,
+				tsk.t_curr->proc_time,
+				tsk.t_curr->activations
 	);
 	
 	switch (task_id())
@@ -370,7 +381,7 @@ void task_exit (int exit_code)
 			break;
 
 		default:
-			task_switch(&tm.tsk_disp);
+			task_switch(&tsk.t_disp);
 	}
 }
 
@@ -379,20 +390,20 @@ void task_exit (int exit_code)
 
 int task_switch (task_t *task)
 {
-	kernel_lock = 1;
+	tmr.kernel_lock = 1;
 	task_t *old;
 
 	if (task == NULL)
 	{
 		fprintf(stderr, "ERROR: cannot switch to a null task\n");
-		kernel_lock = 0;
+		tmr.kernel_lock = 0;
 		return -1;
 	}
 
 	if (task->id == task_id())
 	{
 		fprintf(stderr, "ERROR: cannot switch to the same task\n");
-		kernel_lock = 0;
+		tmr.kernel_lock = 0;
 		return -2;
 	}
 
@@ -402,30 +413,30 @@ int task_switch (task_t *task)
 	
 	task->status = RUNNING;
 	
-	old = tm.tsk_curr;
-	tm.tsk_curr = task;
+	old = tsk.t_curr;
+	tsk.t_curr = task;
 
 	if (old->status != TERMINATED)
 		old->status = READY;
 
 	task->activations++;
-	kernel_lock = 0;
+	tmr.kernel_lock = 0;
 	swapcontext(&old->context, &task->context);
 
 	return 0;
 }
 
-// operações de escalonamento ==================================================
+// Operações de escalonamento ==================================================
 
 //------------------------------------------------------------------------------
 // A tarefa atual libera o processador para outra tarefa
 
 void task_yield ()
 {
-	kernel_lock = 1;
-	tm.q_tasks = tm.q_tasks->next;
-	task_switch(&tm.tsk_disp);
-	kernel_lock = 0;
+	tmr.kernel_lock = 1;
+	tsk.q_tasks = tsk.q_tasks->next;
+	task_switch(&tsk.t_disp);
+	tmr.kernel_lock = 0;
 }
 
 //------------------------------------------------------------------------------
@@ -440,7 +451,7 @@ void task_setprio (task_t *task, int prio)
 		prio = MIN_PRIORITY;
 
 	if (task == NULL)
-		task = tm.tsk_curr;
+		task = tsk.t_curr;
 	
 	task->p_sta = prio;
 	if (task->p_din < prio)
@@ -453,7 +464,7 @@ void task_setprio (task_t *task, int prio)
 int task_getprio (task_t *task)
 {
 	if (task == NULL)
-		task = tm.tsk_curr;
+		task = tsk.t_curr;
 		
 	return task->p_sta;
 }

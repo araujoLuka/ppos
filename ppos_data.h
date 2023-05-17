@@ -1,7 +1,12 @@
+// Lucas Correia de Araujo - GRR 20206150
 // PingPongOS - PingPong Operating System
-// Prof. Carlos A. Maziero, DINF UFPR
-// Versão 1.5 -- Março de 2023
-
+// 'ppos_data.h'
+// -- Cabecalho com definicoes e prototipos
+//
+// Disciplina: Sistema Operacionais (CI1215)
+// Professor: Carlos A. Maziero, DINF UFPR
+//
+// Maio de 2023
 // Estruturas de dados internas do sistema operacional
 
 #ifndef __PPOS_DATA__
@@ -14,6 +19,7 @@
 #include <signal.h>
 #include <sys/time.h>
 
+// Enum para status das tarefas
 typedef enum status_enum 
 {
 	READY,
@@ -68,29 +74,21 @@ typedef struct
 // estrutura para gestao de tarefas
 typedef struct task_manager
 {
-	task_t tsk_main;		// armazena as informacoes da tarefa principal (main)
-	task_t tsk_disp;		// armazena as informacoes da tarefa despachante (dispatcher)
-	task_t *tsk_curr;		// ponteiro para a tarefa atual
+	task_t   t_main;		// armazena as informacoes da tarefa principal (main)
+	task_t   t_disp;		// armazena as informacoes da tarefa despachante (dispatcher)
+	task_t  *t_curr;		// ponteiro para a tarefa atual
 	queue_t *q_tasks;		// ponteiro para a fila de tarefas
-} manager_t;
+	int id_new;				// armazena o id que sera usado para uma nova tarefa
+	int id_last;			// armazena o ultimo id usado em uma tarefa
+} tsk_manager_t;
 
-// armazena o id que sera usado para uma nova tarefa
-extern int id_new;
-
-// armazena o ultimo id usado em uma tarefa
-extern int id_last;
-
-// estrutura que define um tratador de sinal (deve ser global ou static)
-extern struct sigaction action ;
-
-// estrutura de inicialização do timer
-extern struct itimerval timer;
-
-// bloqueador de interrupcao de ticks
-extern int kernel_lock;
-
-// temporizador 
-extern unsigned int sys_timer;
+typedef struct timer_manager
+{
+	struct sigaction int_action;// estrutura que define um tratador de sinal
+	struct itimerval int_timer; // estrutura de inicialização do timer
+	unsigned char kernel_lock; // bloqueador de interrupcao de ticks
+	unsigned int sys_timer;	// temporizador do sistema
+} tmr_manager_t;
 
 // Constantes =======================================================
 
