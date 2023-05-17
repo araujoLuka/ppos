@@ -1,10 +1,10 @@
+// Lucas Correia de Araujo - GRR 20206150
 // PingPongOS - PingPong Operating System
 // -- Biblioteca de Filas
 //
-// Autor: Lucas Correia de Araujo
-//
 // Disciplina: Sistema Operacionais (CI1215)
 // Prof. Carlos A. Maziero, DINF UFPR
+//
 //
 // Abril de 2023
 // Implementacao de operações em uma fila genérica.

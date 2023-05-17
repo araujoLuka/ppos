@@ -1,7 +1,7 @@
+# Lucas Correia de Araujo - GRR 20206150
 # PingPongOS - PingPong Operating System
 # 'makefile'
 #
-# Autor: Lucas Correia de Araujo
 # Disciplina: Sistema Operacionais (CI1215)
 # Professor: Carlos A. Maziero, DINF UFPR
 #
