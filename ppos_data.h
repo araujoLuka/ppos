@@ -39,9 +39,11 @@ typedef struct task_t
 	signed char p_din ;			// valor de prioridade dinamica da tarefa
 	unsigned char quantum ;		// fatia de tempo para tarefa executar
 	unsigned char user_task ;	// se tarefa de usuario entao 1, senao 0
-	unsigned int proc_time ;
-	unsigned int exec_time ;
-	unsigned int activations ;
+	unsigned int proc_time ;	// tempo de processamento na cpu
+	unsigned int exec_time ;	// tempo de vida da tarefa
+	unsigned int activations ;	// numero de ativacoes na cpu
+	struct task_t *waiting ;	// fila de tarefas que estao esperando pela tarefa 
+	int exit_code ;				// codigo de encerramento da tarefa
   // ... (outros campos serão adicionados mais tarde)
 } task_t ;
 

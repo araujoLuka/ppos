@@ -24,6 +24,7 @@ void tick_handler ();
 void timer_init ();
 void main_init (task_t *m);
 int task_create_stack (task_t *task);
+void task_wake_queue (task_t **queue);
 
 // Start
 
@@ -46,11 +47,11 @@ void ppos_init ()
 
 	setvbuf(stdout, 0, _IONBF, 0);
 
-	timer_init();
-
 	task_init(&tsk.t_disp, dispatcher, NULL);
 	tsk.t_disp.quantum = 99;
 	tsk.t_disp.user_task = 0;
+
+	timer_init();
 }
 
 //------------------------------------------------------------------------------
@@ -68,18 +69,22 @@ void main_init (task_t *m)
 	ucontext_t a;
 	getcontext(&a);
 
-	tsk.t_main.id = ID_MAIN;
-	tsk.t_main.context = a;
-	tsk.t_main.next = NULL;
-	tsk.t_main.prev = NULL;
-	tsk.t_main.status = RUNNING;
-	tsk.t_main.p_sta = DEFAULT_PRIORITY;
-	tsk.t_main.p_din = task_getprio(m);
-	tsk.t_main.quantum = DEFAULT_QUANTUM;
-	tsk.t_main.user_task = 1;
-	tsk.t_main.proc_time = 0;
-	tsk.t_main.exec_time = systime();
-	tsk.t_main.activations = 1;
+	m->id = ID_MAIN;
+	m->context = a;
+	m->next = NULL;
+	m->prev = NULL;
+	m->status = RUNNING;
+	m->p_sta = DEFAULT_PRIORITY;
+	m->p_din = task_getprio(m);
+	m->quantum = DEFAULT_QUANTUM;
+	m->user_task = 1;
+	m->proc_time = 0;
+	m->exec_time = systime();
+	m->activations = 1;
+	m->waiting = NULL;
+	m->exit_code = 0;
+	// insere a tarefa na fila de execucao
+	queue_append(&tsk.q_tasks, (queue_t*)m);
 }
 
 //------------------------------------------------------------------------------
@@ -312,6 +317,8 @@ int task_init (task_t *task, void (*start_func)(void *), void *arg)
 	task->proc_time = 0;
 	task->exec_time = systime();
 	task->activations = 0;
+	task->waiting = NULL;
+	task->exit_code = 0;
 
 	tsk.id_last = task->id;
 
@@ -373,6 +380,9 @@ void task_exit (int exit_code)
 				tsk.t_curr->proc_time,
 				tsk.t_curr->activations
 	);
+	tsk.t_curr->exit_code = exit_code;
+	
+	task_wake_queue(&tsk.t_curr->waiting);
 	
 	switch (task_id())
 	{
@@ -382,6 +392,29 @@ void task_exit (int exit_code)
 
 		default:
 			task_switch(&tsk.t_disp);
+	}
+}
+
+void task_wake_queue (task_t **queue)
+{
+	task_t *aux, *next;
+
+	aux = *queue;
+	if (aux == NULL)
+		return;
+
+	for (next = aux->next; aux != next; aux = next, next = aux->next) 
+	{
+		aux->status = READY;
+		queue_remove((queue_t **)queue, (queue_t *)aux);
+		queue_append(&tsk.q_tasks, (queue_t *)aux);
+	}
+
+	if (aux != NULL)
+	{
+		aux->status = READY;
+		queue_remove((queue_t **)queue, (queue_t *)aux);
+		queue_append(&tsk.q_tasks, (queue_t *)aux);
 	}
 }
 
@@ -416,7 +449,7 @@ int task_switch (task_t *task)
 	old = tsk.t_curr;
 	tsk.t_curr = task;
 
-	if (old->status != TERMINATED)
+	if (old->status != TERMINATED && old->status != SUSPENDED)
 		old->status = READY;
 
 	task->activations++;
@@ -424,6 +457,36 @@ int task_switch (task_t *task)
 	swapcontext(&old->context, &task->context);
 
 	return 0;
+}
+
+//------------------------------------------------------------------------------
+// Suspende a tarefa atual, transferindo-a da fila de prontas para a fila "queue"
+
+void task_suspend (task_t **queue) 
+{
+	tmr.kernel_lock = 1;
+	if (tsk.t_curr->status == READY)
+		queue_remove(&tsk.q_tasks, (queue_t *)tsk.t_curr);
+
+	tsk.t_curr->status = SUSPENDED;
+	
+	if (queue != NULL)
+		queue_append((queue_t **)queue, (queue_t *)tsk.t_curr);
+
+	task_yield();
+}
+
+//------------------------------------------------------------------------------
+// Acorda a tarefa indicada, trasferindo-a da fila "queue" para a fila de prontas
+
+void task_resume (task_t *task, task_t **queue)
+{
+	if (queue != NULL)
+		queue_remove((queue_t **)queue, (queue_t *)task);
+
+	task->status = READY;
+
+	queue_append(&tsk.q_tasks, (queue_t *)task);
 }
 
 // Operações de escalonamento ==================================================
@@ -440,7 +503,7 @@ void task_yield ()
 }
 
 //------------------------------------------------------------------------------
-// define a prioridade estática de uma tarefa (ou a tarefa atual)
+// Define a prioridade estática de uma tarefa (ou a tarefa atual)
 
 void task_setprio (task_t *task, int prio)
 {
@@ -459,7 +522,7 @@ void task_setprio (task_t *task, int prio)
 }
 
 //------------------------------------------------------------------------------
-// retorna a prioridade estática de uma tarefa (ou a tarefa atual)
+// Retorna a prioridade estática de uma tarefa (ou a tarefa atual)
 
 int task_getprio (task_t *task)
 {
@@ -467,4 +530,23 @@ int task_getprio (task_t *task)
 		task = tsk.t_curr;
 		
 	return task->p_sta;
+}
+
+// Operações de sincronização ==================================================
+
+//------------------------------------------------------------------------------
+// A tarefa corrente aguarda o encerramento de outra task
+
+int task_wait (task_t *task) 
+{
+	tmr.kernel_lock = 1;
+	if (task == NULL)
+		return -1;
+
+	if (task->status == TERMINATED)
+		return -1;
+
+	task_suspend(&task->waiting);
+	
+	return task->exit_code;
 }
