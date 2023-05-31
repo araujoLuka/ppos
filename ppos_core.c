@@ -39,6 +39,7 @@ void ppos_init ()
 	printf("PPOS: ppos_init > system initialized\n");
 	#endif /* DEBUG */
 
+	tsk.q_tasks = NULL;
 	main_init(&tsk.t_main);
 	tsk.t_curr = &tsk.t_main;
 
@@ -52,7 +53,6 @@ void ppos_init ()
 	tsk.t_disp.user_task = 0;
 
 	timer_init();
-	task_yield();
 }
 
 //------------------------------------------------------------------------------
@@ -67,11 +67,7 @@ void main_init (task_t *m)
 	if (m == NULL)
 		m = &tsk.t_main;
 
-	ucontext_t a;
-	getcontext(&a);
-
 	m->id = ID_MAIN;
-	m->context = a;
 	m->next = NULL;
 	m->prev = NULL;
 	m->status = RUNNING;
@@ -84,6 +80,7 @@ void main_init (task_t *m)
 	m->activations = 1;
 	m->waiting = NULL;
 	m->exit_code = 0;
+
 	// insere a tarefa na fila de execucao
 	queue_append(&tsk.q_tasks, (queue_t*)m);
 }
@@ -194,6 +191,7 @@ void dispatcher ()
 
 				case RUNNING:
 					fprintf(stderr, "ERROR: task exited to dispatcher with RUNNING status\n");
+					exit(141);
 					break;
 
 				default:
@@ -284,6 +282,8 @@ task_t *task_select_and_aging (task_t *q)
 
 int task_init (task_t *task, void (*start_func)(void *), void *arg)
 {
+	tmr.kernel_lock = 1;
+
 	if (task == NULL)
 	{
 		fprintf(stderr, "ERROR: cannot initialize a null task\n");
@@ -323,6 +323,7 @@ int task_init (task_t *task, void (*start_func)(void *), void *arg)
 
 	tsk.id_last = task->id;
 
+	tmr.kernel_lock = 0;
 	return task->id;
 }
 
@@ -363,6 +364,7 @@ int task_id ()
 
 void task_exit (int exit_code)
 {
+	tmr.kernel_lock = 1;
 	#ifdef DEBUG
 	printf("PPOS: task_exit > exiting task %d\n", task_id());
 	#endif /* DEBUG */
@@ -379,9 +381,12 @@ void task_exit (int exit_code)
 	
 	task_wake_queue(&tsk.t_curr->waiting);
 	
+	tmr.kernel_lock = 0;
+
 	switch (task_id())
 	{
 		case ID_DISP:
+			free(tsk.t_disp.context.uc_stack.ss_sp);
 			exit(0);
 			break;
 
@@ -492,10 +497,8 @@ void task_resume (task_t *task, task_t **queue)
 void task_yield ()
 {
 	tmr.kernel_lock = 1;
-
 	tsk.q_tasks = tsk.q_tasks->next;
 	task_switch(&tsk.t_disp);
-	
 	tmr.kernel_lock = 0;
 }
 
@@ -536,7 +539,6 @@ int task_getprio (task_t *task)
 
 int task_wait (task_t *task) 
 {
-	tmr.kernel_lock = 1;
 	if (task == NULL)
 		return -1;
 
