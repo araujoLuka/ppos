@@ -52,6 +52,7 @@ void ppos_init ()
 	tsk.t_disp.user_task = 0;
 
 	timer_init();
+	task_yield();
 }
 
 //------------------------------------------------------------------------------
@@ -332,13 +333,7 @@ int task_create_stack (task_t *task)
 {
 	char *stack;
 
-	if (task->id != ID_DISP)
-		stack = malloc(STACKSIZE);
-	else
-	{
-		char sttc[STACKSIZE];
-		stack = sttc;
-	}
+	stack = malloc(STACKSIZE);
 	if (stack)
 	{
 		task->context.uc_stack.ss_sp = stack;
@@ -497,8 +492,10 @@ void task_resume (task_t *task, task_t **queue)
 void task_yield ()
 {
 	tmr.kernel_lock = 1;
+
 	tsk.q_tasks = tsk.q_tasks->next;
 	task_switch(&tsk.t_disp);
+	
 	tmr.kernel_lock = 0;
 }
 
