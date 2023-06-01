@@ -134,7 +134,7 @@ void tick_handler ()
 	if (tmr.kernel_lock)
 		return;
 
-	if (tsk.t_curr->quantum <= 0)
+	if (tsk.t_curr->quantum == 0)
 	{
 		#ifdef DEBUG
 		printf("PPOS: tick_handler > task %d finished quantum\n", task_id());
@@ -423,7 +423,6 @@ void task_wake_queue (task_t **queue)
 
 int task_switch (task_t *task)
 {
-	tmr.kernel_lock = 1;
 	task_t *old;
 
 	if (task == NULL)
@@ -444,6 +443,8 @@ int task_switch (task_t *task)
 	printf("PPOS: task_switch > switch from task %d to task %d\n", task_id(), task->id);
 	#endif /* DEBUG */
 	
+	tmr.kernel_lock = 1;
+
 	task->status = RUNNING;
 	
 	old = tsk.t_curr;
@@ -464,22 +465,27 @@ int task_switch (task_t *task)
 
 void task_suspend (task_t **queue) 
 {
-	tmr.kernel_lock = 1;
+	task_t *tmp;
+	tmp = tsk.t_curr;
 
 	#ifdef DEBUG
 	printf("PPOS: task_suspend > suspending task %d\n", task_id());
 	#endif /* DEBUG */
 
+	tmr.kernel_lock = 1;
+
 	// tenta remover tarefa da fila de prontas
 	// tratamento para caso a tarefa nao pertenca a fila dentro da funcao
-	queue_remove(&tsk.q_tasks, (queue_t *)tsk.t_curr);
+	queue_remove(&tsk.q_tasks, (queue_t *)tmp);
+
+	tmr.kernel_lock = 0;
 
 	// ajusta o estado da tarefa
-	tsk.t_curr->status = SUSPENDED;
+	tmp->status = SUSPENDED;
 	
 	// insere a tarefa suspensa na fila queue
 	if (queue != NULL)
-		queue_append((queue_t **)queue, (queue_t *)tsk.t_curr);
+		queue_append((queue_t **)queue, (queue_t *)tmp);
 
 	task_switch(&tsk.t_disp);
 }
@@ -494,7 +500,11 @@ void task_resume (task_t *task, task_t **queue)
 
 	task->status = READY;
 
+	tmr.kernel_lock = 1;
+
 	queue_append(&tsk.q_tasks, (queue_t *)task);
+
+	tmr.kernel_lock = 0;
 }
 
 // Operações de escalonamento ==================================================
@@ -506,8 +516,8 @@ void task_yield ()
 {
 	tmr.kernel_lock = 1;
 	tsk.q_tasks = tsk.q_tasks->next;
-	task_switch(&tsk.t_disp);
 	tmr.kernel_lock = 0;
+	task_switch(&tsk.t_disp);
 }
 
 //------------------------------------------------------------------------------
@@ -560,10 +570,14 @@ int task_wait (task_t *task)
 	}
 
 	#ifdef DEBUG
-	printf("PPOS: task_wait > task %d waiting task %d\n", task_id(), task->id);
+	printf("PPOS: task_wait > setting task %d to wait task %d\n", task_id(), task->id);
 	#endif /* DEBUG */
 	
 	task_suspend(&task->waiting);
+	
+	#ifdef DEBUG
+	printf("PPOS: task_wait > task %d ended with exit_code %d\n", task->id, task->exit_code);
+	#endif /* DEBUG */
 	
 	return task->exit_code;
 }
