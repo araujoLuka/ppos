@@ -148,6 +148,19 @@ void tick_handler ()
 	tsk.current->quantum -= tsk.current->user_task;
 }
 
+//------------------------------------------------------------------------------
+// Suspende a tarefa corrente por t milissegundos
+
+void task_sleep (int t)
+{
+	if (t <= 0)
+		return;
+
+	tsk.current->wake_time = systime() + t;
+
+	task_suspend((task_t **)&tsk.sleeping);
+}
+
 // Controle de execucao de tarefas =============================================
 
 //------------------------------------------------------------------------------
@@ -156,6 +169,7 @@ void tick_handler ()
 void dispatcher ()
 {
 	task_t *next;
+	task_t *aux1, *aux2;
 
 	#ifdef DEBUG
 	printf("PPOS: dispatcher > tasks dispatcher initialize\n");
@@ -197,6 +211,16 @@ void dispatcher ()
 					break;
 
 				default:
+					aux1 = (task_t *)tsk.sleeping;
+					if (next->status == SUSPENDED)
+						aux1 = next;
+					for (aux2=aux1->next; aux1 != aux2; aux1=aux2, aux2=aux1->next)
+					{
+						if (aux1->wake_time <= systime())
+							task_resume(aux1, (task_t **)&tsk.sleeping);
+					}
+					if (aux1->wake_time <= systime())
+						task_resume(aux1, (task_t **)&tsk.sleeping);
 					break;
 			}
 		}

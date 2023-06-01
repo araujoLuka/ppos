@@ -44,6 +44,7 @@ typedef struct task_t
 	unsigned int activations ;	// numero de ativacoes na cpu
 	struct task_t *waiting ;	// fila de tarefas que estao esperando pela tarefa 
 	int exit_code ;				// codigo de encerramento da tarefa
+	unsigned int wake_time ;	// tempo para tarefa acordar
   // ... (outros campos serão adicionados mais tarde)
 } task_t ;
 
@@ -79,7 +80,8 @@ typedef struct task_manager
 	task_t   main;			// armazena as informacoes da tarefa principal (main)
 	task_t   dispatcher;	// armazena as informacoes da tarefa despachante (dispatcher)
 	task_t  *current;		// ponteiro para a tarefa atual
-	queue_t *ready;			// ponteiro para a fila de tarefas
+	queue_t *ready;			// ponteiro para a fila de tarefas prontas
+	queue_t *sleeping;		// ponteiro para a fila de tarefas dormindo
 	int id_new;				// armazena o id que sera usado para uma nova tarefa
 } tsk_manager_t;
 
