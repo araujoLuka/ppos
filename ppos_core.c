@@ -11,6 +11,8 @@
 
 #include "ppos.h"
 #include "ppos_data.h"
+#include "queue.h"
+#include <unistd.h>
 
 // Estruturas globais
 tsk_manager_t tsk;
@@ -161,6 +163,47 @@ void task_sleep (int t)
 	task_suspend((task_t **)&tsk.sleeping);
 }
 
+//------------------------------------------------------------------------------
+// Acorda as tarefas da fila de tarefas dormindo que podem ser acordadas
+// - Retorna o menor tempo que falta para uma tarefa acordar dentre todas
+// - Caso a fila esteja vazia retorna 0
+
+unsigned int task_awake()
+{
+	task_t *aux1, *aux2;
+	int tam, tmp;
+	unsigned int less;
+
+	tam = queue_size(tsk.sleeping);
+	less = 1000;
+
+	if (tam == 0)
+		return 0;
+
+	aux1 = (task_t *)tsk.sleeping;
+	aux2 = aux1->next;
+
+	for (int i=0; i < tam; i++)
+	{
+		tmp = aux1->wake_time - systime() - 1;
+		if (tmp < 0)
+		{
+			task_resume(aux1, (task_t **)&tsk.sleeping);
+			tam--;
+		}
+		else
+		{
+			if (tmp < less)
+				less = tmp;
+		}
+
+		aux1 = aux2;
+		aux2 = aux1->next;
+	}
+
+	return less;
+}
+
 // Controle de execucao de tarefas =============================================
 
 //------------------------------------------------------------------------------
@@ -169,60 +212,62 @@ void task_sleep (int t)
 void dispatcher ()
 {
 	task_t *next;
-	task_t *aux1, *aux2;
+	unsigned int less_wake_time;
 
 	#ifdef DEBUG
 	printf("PPOS: dispatcher > tasks dispatcher initialize\n");
 	#endif
 	
-	// enquanto houverem tarefas de usuário
-	while (queue_size(tsk.ready) > 0) 
+	while (1) 
 	{
-		#ifdef DEBUG
-		printf("PPOS: dispatcher > selecting next task\n");
-		#endif
-
-		// escolhe a proxima tarefa a executar
-		next = scheduler();
-
-		// escalonador escolher uma tarefa
-		if (next != NULL)
+		less_wake_time = task_awake();
+			
+		// enquanto houverem tarefas de usuário
+		if (queue_size(tsk.ready) > 0) 
 		{
-			// reseta o quantum da terafa a receber o processador
-			next->quantum = DEFAULT_QUANTUM;
+			#ifdef DEBUG
+			printf("PPOS: dispatcher > selecting next task\n");
+			#endif
 
-			// transfere o controle para a proxima tarefa
-			task_switch(next);
+			// escolhe a proxima tarefa a executar
+			next = scheduler();
 
-			// voltando ao dispatcher, trata a tarefa de acordo com seu estado
-			switch (next->status)
+			// escalonador escolher uma tarefa
+			if (next != NULL)
 			{
-				case TERMINATED:
-					#ifdef DEBUG
-					printf("PPOS: dispatcher > removed task %d from queue and freed memory\n", next->id);
-					#endif
-					queue_remove(&tsk.ready, (queue_t*)next);
-					free(next->context.uc_stack.ss_sp);
-					break;
+				// reseta o quantum da terafa a receber o processador
+				next->quantum = DEFAULT_QUANTUM;
 
-				case RUNNING:
-					fprintf(stderr, "ERROR: task exited to dispatcher with RUNNING status\n");
-					exit(141);
-					break;
+				// transfere o controle para a proxima tarefa
+				task_switch(next);
 
-				default:
-					aux1 = (task_t *)tsk.sleeping;
-					if (next->status == SUSPENDED)
-						aux1 = next;
-					for (aux2=aux1->next; aux1 != aux2; aux1=aux2, aux2=aux1->next)
-					{
-						if (aux1->wake_time <= systime())
-							task_resume(aux1, (task_t **)&tsk.sleeping);
-					}
-					if (aux1->wake_time <= systime())
-						task_resume(aux1, (task_t **)&tsk.sleeping);
-					break;
+				// voltando ao dispatcher, trata a tarefa de acordo com seu estado
+				switch (next->status)
+				{
+					case TERMINATED:
+						#ifdef DEBUG
+						printf("PPOS: dispatcher > removed task %d from queue and freed memory\n", next->id);
+						#endif
+						queue_remove(&tsk.ready, (queue_t*)next);
+						free(next->context.uc_stack.ss_sp);
+						break;
+
+					case RUNNING:
+						fprintf(stderr, "ERROR: task exited to dispatcher with RUNNING status\n");
+						exit(141);
+						break;
+
+					default:
+						break;
+				}
 			}
+		}
+		else
+		{
+			if (queue_size(tsk.sleeping) == 0)
+				break;
+			// faz o dispatcher dormir para aliviar o processamento
+			usleep(less_wake_time);
 		}
 	}
 	
@@ -497,8 +542,6 @@ void task_suspend (task_t **queue)
 	// tratamento para caso a tarefa nao pertenca a fila dentro da funcao
 	queue_remove(&tsk.ready, (queue_t *)tmp);
 
-	tmr.kernel_lock = 0;
-
 	// ajusta o estado da tarefa
 	tmp->status = SUSPENDED;
 	
@@ -506,6 +549,7 @@ void task_suspend (task_t **queue)
 	if (queue != NULL)
 		queue_append((queue_t **)queue, (queue_t *)tmp);
 
+	tmr.kernel_lock = 0;
 	task_switch(&tsk.dispatcher);
 }
 
@@ -522,6 +566,8 @@ void task_resume (task_t *task, task_t **queue)
 	tmr.kernel_lock = 1;
 
 	queue_append(&tsk.ready, (queue_t *)task);
+
+	tmr.kernel_lock = 0;
 }
 
 // Operações de escalonamento ==================================================

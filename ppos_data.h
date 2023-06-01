@@ -19,6 +19,16 @@
 #include <signal.h>
 #include <sys/time.h>
 
+#ifdef _WIN32 
+    #include <Windows.h>
+#else
+	#ifdef _WIN64
+		#include <Windows.h>
+	#else
+		#include <unistd.h>
+	#endif
+#endif
+
 // Enum para status das tarefas
 typedef enum status_enum 
 {
