@@ -39,18 +39,17 @@ void ppos_init ()
 	printf("PPOS: ppos_init > system initialized\n");
 	#endif /* DEBUG */
 
-	tsk.q_tasks = NULL;
-	main_init(&tsk.t_main);
-	tsk.t_curr = &tsk.t_main;
+	tsk.ready = NULL;
+	main_init(&tsk.main);
+	tsk.current = &tsk.main;
 
-	tsk.id_last = tsk.t_main.id;
-	tsk.id_new = tsk.t_main.id + 1;
+	tsk.id_new = tsk.main.id + 1;
 
 	setvbuf(stdout, 0, _IONBF, 0);
 
-	task_init(&tsk.t_disp, dispatcher, NULL);
-	tsk.t_disp.quantum = 99;
-	tsk.t_disp.user_task = 0;
+	task_init(&tsk.dispatcher, dispatcher, NULL);
+	tsk.dispatcher.quantum = 99;
+	tsk.dispatcher.user_task = 0;
 
 	timer_init();
 }
@@ -65,7 +64,7 @@ void main_init (task_t *m)
 	#endif /* DEBUG */
 
 	if (m == NULL)
-		m = &tsk.t_main;
+		m = &tsk.main;
 
 	m->id = ID_MAIN;
 	m->next = NULL;
@@ -82,7 +81,7 @@ void main_init (task_t *m)
 	m->exit_code = 0;
 
 	// insere a tarefa na fila de execucao
-	queue_append(&tsk.q_tasks, (queue_t*)m);
+	queue_append(&tsk.ready, (queue_t*)m);
 }
 
 //------------------------------------------------------------------------------
@@ -134,7 +133,7 @@ void tick_handler ()
 	if (tmr.kernel_lock)
 		return;
 
-	if (tsk.t_curr->quantum == 0)
+	if (tsk.current->quantum == 0)
 	{
 		#ifdef DEBUG
 		printf("PPOS: tick_handler > task %d finished quantum\n", task_id());
@@ -143,8 +142,8 @@ void tick_handler ()
 	}
 
 	tmr.sys_timer++;
-	tsk.t_curr->proc_time++;
-	tsk.t_curr->quantum -= tsk.t_curr->user_task;
+	tsk.current->proc_time++;
+	tsk.current->quantum -= tsk.current->user_task;
 }
 // Controle de execucao de tarefas =============================================
 
@@ -160,7 +159,7 @@ void dispatcher ()
 	#endif
 	
 	// enquanto houverem tarefas de usuário
-	while (queue_size(tsk.q_tasks) > 0) 
+	while (queue_size(tsk.ready) > 0) 
 	{
 		#ifdef DEBUG
 		printf("PPOS: dispatcher > selecting next task\n");
@@ -185,7 +184,7 @@ void dispatcher ()
 					#ifdef DEBUG
 					printf("PPOS: dispatcher > removed task %d from queue and freed memory\n", next->id);
 					#endif
-					queue_remove(&tsk.q_tasks, (queue_t*)next);
+					queue_remove(&tsk.ready, (queue_t*)next);
 					free(next->context.uc_stack.ss_sp);
 					break;
 
@@ -215,11 +214,11 @@ task_t *scheduler ()
 {
 	task_t *t;
 
-	if (tsk.q_tasks == NULL)
+	if (tsk.ready == NULL)
 		return NULL;
 
 	// esquema de task aging
-	t = task_select_and_aging((task_t*)tsk.q_tasks);
+	t = task_select_and_aging((task_t*)tsk.ready);
 
 	#ifdef DEBUG
 	printf("PPOS: scheduler > selected task %d (priority d:%d - e:%d)\n", t->id, t->p_din, t->p_sta);
@@ -235,18 +234,18 @@ task_t *scheduler ()
 		case RUNNING:
 			fprintf(stderr, "ERROR: catched a running task in scheduler function\n");
 			t->status = READY;
-			tsk.q_tasks = tsk.q_tasks->next;
+			tsk.ready = tsk.ready->next;
 			break;
 
 		case SUSPENDED:
 			fprintf(stderr, "ERROR: catched a suspended task in scheduler function\n");
 			t->status = READY;
-			tsk.q_tasks = tsk.q_tasks->next;
+			tsk.ready = tsk.ready->next;
 			break;
 
 		case TERMINATED:
 			fprintf(stderr, "ERROR: catched a terminated task in tasks queue\n");
-			queue_remove(&tsk.q_tasks, (queue_t*)t);
+			queue_remove(&tsk.ready, (queue_t*)t);
 			break;	
 	}
 
@@ -308,7 +307,7 @@ int task_init (task_t *task, void (*start_func)(void *), void *arg)
 	
 	if (task->id != ID_DISP)
 		// insere a tarefa na fila de execucao
-		queue_append(&tsk.q_tasks, (queue_t*)task);
+		queue_append(&tsk.ready, (queue_t*)task);
 
 	task->status = READY;
 	task->p_sta = DEFAULT_PRIORITY;
@@ -320,8 +319,6 @@ int task_init (task_t *task, void (*start_func)(void *), void *arg)
 	task->activations = 0;
 	task->waiting = NULL;
 	task->exit_code = 0;
-
-	tsk.id_last = task->id;
 
 	tmr.kernel_lock = 0;
 	return task->id;
@@ -356,7 +353,7 @@ int task_create_stack (task_t *task)
 
 int task_id ()
 {
-	return tsk.t_curr->id;
+	return tsk.current->id;
 }
 
 //------------------------------------------------------------------------------
@@ -369,29 +366,29 @@ void task_exit (int exit_code)
 	printf("PPOS: task_exit > exiting task %d\n", task_id());
 	#endif /* DEBUG */
 
-	tsk.t_curr->status = TERMINATED;
-	tsk.t_curr->exec_time = systime() - tsk.t_curr->exec_time;
+	tsk.current->status = TERMINATED;
+	tsk.current->exec_time = systime() - tsk.current->exec_time;
 	printf("Task %d exit: execution time %d ms, processor time %d ms, %d activations\n",
 				task_id(),
-				tsk.t_curr->exec_time,
-				tsk.t_curr->proc_time,
-				tsk.t_curr->activations
+				tsk.current->exec_time,
+				tsk.current->proc_time,
+				tsk.current->activations
 	);
-	tsk.t_curr->exit_code = exit_code;
+	tsk.current->exit_code = exit_code;
 	
-	task_wake_queue(&tsk.t_curr->waiting);
+	task_wake_queue(&tsk.current->waiting);
 	
 	tmr.kernel_lock = 0;
 
 	switch (task_id())
 	{
 		case ID_DISP:
-			free(tsk.t_disp.context.uc_stack.ss_sp);
+			free(tsk.dispatcher.context.uc_stack.ss_sp);
 			exit(0);
 			break;
 
 		default:
-			task_switch(&tsk.t_disp);
+			task_switch(&tsk.dispatcher);
 	}
 }
 
@@ -407,14 +404,14 @@ void task_wake_queue (task_t **queue)
 	{
 		aux->status = READY;
 		queue_remove((queue_t **)queue, (queue_t *)aux);
-		queue_append(&tsk.q_tasks, (queue_t *)aux);
+		queue_append(&tsk.ready, (queue_t *)aux);
 	}
 
 	if (aux != NULL)
 	{
 		aux->status = READY;
 		queue_remove((queue_t **)queue, (queue_t *)aux);
-		queue_append(&tsk.q_tasks, (queue_t *)aux);
+		queue_append(&tsk.ready, (queue_t *)aux);
 	}
 }
 
@@ -447,8 +444,8 @@ int task_switch (task_t *task)
 
 	task->status = RUNNING;
 	
-	old = tsk.t_curr;
-	tsk.t_curr = task;
+	old = tsk.current;
+	tsk.current = task;
 
 	if (old->status == RUNNING)
 		old->status = READY;
@@ -466,7 +463,7 @@ int task_switch (task_t *task)
 void task_suspend (task_t **queue) 
 {
 	task_t *tmp;
-	tmp = tsk.t_curr;
+	tmp = tsk.current;
 
 	#ifdef DEBUG
 	printf("PPOS: task_suspend > suspending task %d\n", task_id());
@@ -476,7 +473,7 @@ void task_suspend (task_t **queue)
 
 	// tenta remover tarefa da fila de prontas
 	// tratamento para caso a tarefa nao pertenca a fila dentro da funcao
-	queue_remove(&tsk.q_tasks, (queue_t *)tmp);
+	queue_remove(&tsk.ready, (queue_t *)tmp);
 
 	tmr.kernel_lock = 0;
 
@@ -487,7 +484,7 @@ void task_suspend (task_t **queue)
 	if (queue != NULL)
 		queue_append((queue_t **)queue, (queue_t *)tmp);
 
-	task_switch(&tsk.t_disp);
+	task_switch(&tsk.dispatcher);
 }
 
 //------------------------------------------------------------------------------
@@ -502,7 +499,7 @@ void task_resume (task_t *task, task_t **queue)
 
 	tmr.kernel_lock = 1;
 
-	queue_append(&tsk.q_tasks, (queue_t *)task);
+	queue_append(&tsk.ready, (queue_t *)task);
 
 	tmr.kernel_lock = 0;
 }
@@ -515,9 +512,9 @@ void task_resume (task_t *task, task_t **queue)
 void task_yield ()
 {
 	tmr.kernel_lock = 1;
-	tsk.q_tasks = tsk.q_tasks->next;
+	tsk.ready = tsk.ready->next;
 	tmr.kernel_lock = 0;
-	task_switch(&tsk.t_disp);
+	task_switch(&tsk.dispatcher);
 }
 
 //------------------------------------------------------------------------------
@@ -532,7 +529,7 @@ void task_setprio (task_t *task, int prio)
 		prio = MIN_PRIORITY;
 
 	if (task == NULL)
-		task = tsk.t_curr;
+		task = tsk.current;
 	
 	task->p_sta = prio;
 	if (task->p_din < prio)
@@ -545,7 +542,7 @@ void task_setprio (task_t *task, int prio)
 int task_getprio (task_t *task)
 {
 	if (task == NULL)
-		task = tsk.t_curr;
+		task = tsk.current;
 		
 	return task->p_sta;
 }

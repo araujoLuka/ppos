@@ -76,12 +76,11 @@ typedef struct
 // estrutura para gestao de tarefas
 typedef struct task_manager
 {
-	task_t   t_main;		// armazena as informacoes da tarefa principal (main)
-	task_t   t_disp;		// armazena as informacoes da tarefa despachante (dispatcher)
-	task_t  *t_curr;		// ponteiro para a tarefa atual
-	queue_t *q_tasks;		// ponteiro para a fila de tarefas
+	task_t   main;			// armazena as informacoes da tarefa principal (main)
+	task_t   dispatcher;	// armazena as informacoes da tarefa despachante (dispatcher)
+	task_t  *current;		// ponteiro para a tarefa atual
+	queue_t *ready;			// ponteiro para a fila de tarefas
 	int id_new;				// armazena o id que sera usado para uma nova tarefa
-	int id_last;			// armazena o ultimo id usado em uma tarefa
 } tsk_manager_t;
 
 typedef struct timer_manager
