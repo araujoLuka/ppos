@@ -24,7 +24,7 @@ void tick_handler ();
 void timer_init ();
 void main_init (task_t *m);
 int task_create_stack (task_t *task);
-void task_wake_queue (task_t **queue);
+void task_release (task_t **queue);
 
 // Start
 
@@ -84,6 +84,16 @@ void main_init (task_t *m)
 	queue_append(&tsk.ready, (queue_t*)m);
 }
 
+// Operações de gestão do tempo ================================================
+
+//------------------------------------------------------------------------------
+// Retorna o relógio atual (em milisegundos)
+
+unsigned int systime ()
+{
+	return tmr.sys_timer;
+}
+
 //------------------------------------------------------------------------------
 // Programa os ticks de interrupcoes do sistema no tempo dado por TICK_FREQ_IN_MS
 
@@ -118,14 +128,6 @@ void timer_init ()
 }
 
 //------------------------------------------------------------------------------
-// Retorna o relógio atual (em milisegundos)
-
-unsigned int systime ()
-{
-	return tmr.sys_timer;
-}
-
-//------------------------------------------------------------------------------
 // Tratador de ticks
 
 void tick_handler ()
@@ -145,6 +147,7 @@ void tick_handler ()
 	tsk.current->proc_time++;
 	tsk.current->quantum -= tsk.current->user_task;
 }
+
 // Controle de execucao de tarefas =============================================
 
 //------------------------------------------------------------------------------
@@ -376,7 +379,7 @@ void task_exit (int exit_code)
 	);
 	tsk.current->exit_code = exit_code;
 	
-	task_wake_queue(&tsk.current->waiting);
+	task_release(&tsk.current->waiting);
 	
 	tmr.kernel_lock = 0;
 
@@ -392,7 +395,10 @@ void task_exit (int exit_code)
 	}
 }
 
-void task_wake_queue (task_t **queue)
+//------------------------------------------------------------------------------
+// Libera todas as tarefas da fila 'queue' com task_resume
+
+void task_release (task_t **queue)
 {
 	task_t *aux, *next;
 
@@ -401,18 +407,10 @@ void task_wake_queue (task_t **queue)
 		return;
 
 	for (next = aux->next; aux != next; aux = next, next = aux->next) 
-	{
-		aux->status = READY;
-		queue_remove((queue_t **)queue, (queue_t *)aux);
-		queue_append(&tsk.ready, (queue_t *)aux);
-	}
+		task_resume(aux, queue);
 
 	if (aux != NULL)
-	{
-		aux->status = READY;
-		queue_remove((queue_t **)queue, (queue_t *)aux);
-		queue_append(&tsk.ready, (queue_t *)aux);
-	}
+		task_resume(aux, queue);
 }
 
 //------------------------------------------------------------------------------
@@ -500,8 +498,6 @@ void task_resume (task_t *task, task_t **queue)
 	tmr.kernel_lock = 1;
 
 	queue_append(&tsk.ready, (queue_t *)task);
-
-	tmr.kernel_lock = 0;
 }
 
 // Operações de escalonamento ==================================================
