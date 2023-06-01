@@ -449,7 +449,7 @@ int task_switch (task_t *task)
 	old = tsk.t_curr;
 	tsk.t_curr = task;
 
-	if (old->status != TERMINATED && old->status != SUSPENDED)
+	if (old->status == RUNNING)
 		old->status = READY;
 
 	task->activations++;
@@ -465,15 +465,23 @@ int task_switch (task_t *task)
 void task_suspend (task_t **queue) 
 {
 	tmr.kernel_lock = 1;
-	if (tsk.t_curr->status == READY)
-		queue_remove(&tsk.q_tasks, (queue_t *)tsk.t_curr);
 
+	#ifdef DEBUG
+	printf("PPOS: task_suspend > suspending task %d\n", task_id());
+	#endif /* DEBUG */
+
+	// tenta remover tarefa da fila de prontas
+	// tratamento para caso a tarefa nao pertenca a fila dentro da funcao
+	queue_remove(&tsk.q_tasks, (queue_t *)tsk.t_curr);
+
+	// ajusta o estado da tarefa
 	tsk.t_curr->status = SUSPENDED;
 	
+	// insere a tarefa suspensa na fila queue
 	if (queue != NULL)
 		queue_append((queue_t **)queue, (queue_t *)tsk.t_curr);
 
-	task_yield();
+	task_switch(&tsk.t_disp);
 }
 
 //------------------------------------------------------------------------------
@@ -540,11 +548,21 @@ int task_getprio (task_t *task)
 int task_wait (task_t *task) 
 {
 	if (task == NULL)
+	{
+		fprintf(stderr, "ERROR: cannot wait for a NULL task\n");
 		return -1;
+	}
 
 	if (task->status == TERMINATED)
+	{
+		fprintf(stderr, "ERROR: cannot wait for a terminated task\n");
 		return -1;
+	}
 
+	#ifdef DEBUG
+	printf("PPOS: task_wait > task %d waiting task %d\n", task_id(), task->id);
+	#endif /* DEBUG */
+	
 	task_suspend(&task->waiting);
 	
 	return task->exit_code;
