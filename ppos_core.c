@@ -42,6 +42,8 @@ void ppos_init ()
 	#endif /* DEBUG */
 
 	tsk.ready = NULL;
+    tsk.sleeping = NULL;
+    tsk.current = NULL;
 	main_init(&tsk.main);
 	tsk.current = &tsk.main;
 
@@ -81,6 +83,7 @@ void main_init (task_t *m)
 	m->activations = 1;
 	m->waiting = NULL;
 	m->exit_code = 0;
+    m->wake_time = 0;
 
 	// insere a tarefa na fila de execucao
 	queue_append(&tsk.ready, (queue_t*)m);
@@ -377,10 +380,8 @@ int task_init (task_t *task, void (*start_func)(void *), void *arg)
 	// cria o contexto da tarefa
 	makecontext(&task->context, (void*)(start_func), 1, arg);
 	
-	if (task->id != ID_DISP)
-		// insere a tarefa na fila de execucao
-		queue_append(&tsk.ready, (queue_t*)task);
-
+    task->prev = NULL;
+    task->next = NULL;
 	task->status = READY;
 	task->p_sta = DEFAULT_PRIORITY;
 	task->p_din = task_getprio(task);
@@ -391,6 +392,11 @@ int task_init (task_t *task, void (*start_func)(void *), void *arg)
 	task->activations = 0;
 	task->waiting = NULL;
 	task->exit_code = 0;
+    task->wake_time = 0;
+
+	if (task->id != ID_DISP)
+		// insere a tarefa na fila de execucao
+		queue_append(&tsk.ready, (queue_t*)task);
 
 	tmr.kernel_lock = 0;
 	return task->id;
@@ -616,19 +622,17 @@ int task_getprio (task_t *task)
 // Operações de sincronização ==================================================
 
 //------------------------------------------------------------------------------
-// A tarefa corrente aguarda o encerramento de outra task
 
+// A tarefa corrente aguarda o encerramento de outra task
 int task_wait (task_t *task) 
 {
 	if (task == NULL)
 	{
-		fprintf(stderr, "ERROR: cannot wait for a NULL task\n");
 		return -1;
 	}
 
 	if (task->status == TERMINATED)
 	{
-		fprintf(stderr, "ERROR: cannot wait for a terminated task\n");
 		return -1;
 	}
 
@@ -643,4 +647,85 @@ int task_wait (task_t *task)
 	#endif /* DEBUG */
 	
 	return task->exit_code;
+}
+
+// inicializa um semáforo com valor inicial "value"
+int sem_init (semaphore_t *s, int value) 
+{
+    tmr.kernel_lock = 1;
+
+    s->init = value;
+    s->counter = value;
+    s->tasks = NULL;
+    s->in_use = 0;
+
+    tmr.kernel_lock = 0;
+    return 0;
+}
+
+// requisita o semáforo
+int sem_down (semaphore_t *s)
+{
+    tmr.kernel_lock = 1;
+
+    if (s == NULL)
+    {
+        tmr.kernel_lock = 0;
+        return -1;
+    }
+
+    while (s->in_use);
+    s->in_use = 1;
+    
+    if (s->counter <= 0)
+    {
+        s->in_use = 0;
+        task_suspend((task_t**)&s->tasks);
+    }
+
+    if (s == NULL)
+        return -1;
+
+    s->counter--;
+    s->in_use = 0;
+    tmr.kernel_lock = 0;
+
+    return 0;
+}
+
+// libera o semáforo
+int sem_up (semaphore_t *s)
+{
+    if (s == NULL)
+    {
+        return -1;
+    }
+
+    if (s->init < ++s->counter)
+        s->counter = s->init;
+
+    if (s->tasks != NULL)
+        task_resume((task_t*)s->tasks, (task_t**)&s->tasks);
+
+    return 0;
+}
+
+// "destroi" o semáforo, liberando as tarefas bloqueadas
+int sem_destroy (semaphore_t *s)
+{
+    task_t *t;
+
+    tmr.kernel_lock = 1;
+
+    for (t = (task_t*)s->tasks; queue_size(s->tasks) > 0; t = (task_t*)s->tasks)
+    {
+        task_resume(t, (task_t **)&s->tasks);
+        tmr.kernel_lock = 1;
+    }
+
+    s = NULL;
+
+    tmr.kernel_lock = 0;
+
+    return 0;
 }
