@@ -11,8 +11,6 @@
 
 #include "ppos.h"
 #include "ppos_data.h"
-#include "queue.h"
-#include <unistd.h>
 
 // Estruturas globais
 tsk_manager_t tsk;
@@ -70,9 +68,9 @@ void main_init (task_t *m)
 	if (m == NULL)
 		m = &tsk.main;
 
-	m->id = ID_MAIN;
 	m->next = NULL;
 	m->prev = NULL;
+	m->id = ID_MAIN;
 	m->status = RUNNING;
 	m->p_sta = DEFAULT_PRIORITY;
 	m->p_din = task_getprio(m);
@@ -364,11 +362,6 @@ int task_init (task_t *task, void (*start_func)(void *), void *arg)
 		return -1;
 	}
 
-	task->id = tsk.id_new++;
-	#ifdef DEBUG
-	printf("PPOS: task_init > task %d created by task %d (func %p)\n", task->id, task_id(), start_func);
-	#endif /* DEBUG */
-
 	// salva as informacoes do contexto atual para
 	// ser usado como base do novo contexto
 	getcontext(&task->context);
@@ -382,6 +375,7 @@ int task_init (task_t *task, void (*start_func)(void *), void *arg)
 	
     task->prev = NULL;
     task->next = NULL;
+	task->id = tsk.id_new++;
 	task->status = READY;
 	task->p_sta = DEFAULT_PRIORITY;
 	task->p_din = task_getprio(task);
@@ -397,6 +391,10 @@ int task_init (task_t *task, void (*start_func)(void *), void *arg)
 	if (task->id != ID_DISP)
 		// insere a tarefa na fila de execucao
 		queue_append(&tsk.ready, (queue_t*)task);
+
+	#ifdef DEBUG
+	printf("PPOS: task_init > task %d created by task %d (func %p)\n", task->id, task_id(), start_func);
+	#endif /* DEBUG */
 
 	tmr.kernel_lock = 0;
 	return task->id;
@@ -446,7 +444,7 @@ void task_exit (int exit_code)
 
 	tsk.current->status = TERMINATED;
 	tsk.current->exec_time = systime() - tsk.current->exec_time;
-	printf("Task %d exit: execution time %d ms, processor time %d ms, %d activations\n",
+	printf("Task %d exit: execution time %5d ms, processor time %5d ms, %d activations\n",
 				task_id(),
 				tsk.current->exec_time,
 				tsk.current->proc_time,
@@ -658,6 +656,7 @@ int sem_init (semaphore_t *s, int value)
     s->counter = value;
     s->tasks = NULL;
     s->in_use = 0;
+    s->destroied = 0;
 
     tmr.kernel_lock = 0;
     return 0;
@@ -669,6 +668,13 @@ int sem_down (semaphore_t *s)
     tmr.kernel_lock = 1;
 
     if (s == NULL)
+    {
+        fprintf(stderr, "ERROR: semaphore can't be null\n");
+        tmr.kernel_lock = 0;
+        return -1;
+    }
+
+    if (s->destroied == 1)
     {
         tmr.kernel_lock = 0;
         return -1;
@@ -683,8 +689,11 @@ int sem_down (semaphore_t *s)
         task_suspend((task_t**)&s->tasks);
     }
 
-    if (s == NULL)
+    if (s->destroied == 1)
+    {
+        tmr.kernel_lock = 0;
         return -1;
+    }
 
     s->counter--;
     s->in_use = 0;
@@ -697,12 +706,12 @@ int sem_down (semaphore_t *s)
 int sem_up (semaphore_t *s)
 {
     if (s == NULL)
-    {
         return -1;
-    }
 
-    if (s->init < ++s->counter)
-        s->counter = s->init;
+    if (s->destroied == 1)
+        return -1;
+
+    s->counter++;
 
     if (s->tasks != NULL)
         task_resume((task_t*)s->tasks, (task_t**)&s->tasks);
@@ -715,6 +724,12 @@ int sem_destroy (semaphore_t *s)
 {
     task_t *t;
 
+    if (! s)
+    {
+        fprintf(stderr, "ERROR: can't destroy a NULL semaphore\n");
+        return -1;
+    }
+
     tmr.kernel_lock = 1;
 
     for (t = (task_t*)s->tasks; queue_size(s->tasks) > 0; t = (task_t*)s->tasks)
@@ -723,9 +738,180 @@ int sem_destroy (semaphore_t *s)
         tmr.kernel_lock = 1;
     }
 
-    s = NULL;
+    s->destroied = 1;
 
     tmr.kernel_lock = 0;
 
     return 0;
+}
+
+// operações de comunicação ====================================================
+
+// inicializa uma fila para até max mensagens de size bytes cada
+int mqueue_init (mqueue_t *queue, int max, int size)
+{
+    tmr.kernel_lock = 1;
+
+    if (max <= 0)
+    {
+        fprintf(stderr, "ERROR: max number of messages must be greater than zero\n");
+        tmr.kernel_lock = 0;
+        return -1;
+    }
+
+    if (size <= 0)
+    {
+        fprintf(stderr, "ERROR: message size must be greater than zero\n");
+        tmr.kernel_lock = 0;
+        return -1;
+    }
+
+    if (! queue)
+    {
+        fprintf(stderr, "ERROR: queue can't be null\n");
+        tmr.kernel_lock = 0;
+        return -1;
+    }
+
+    queue->max_msg = max;
+    queue->msg_size = size;
+    queue->messages = NULL;
+    sem_init(&queue->send, max);
+    sem_init(&queue->recv, 0);
+
+    tmr.kernel_lock = 0;
+
+    return 0;
+}
+
+// envia uma mensagem para a fila
+int mqueue_send (mqueue_t *queue, void *msg)
+{
+    tmr.kernel_lock = 1;
+
+    if (queue == NULL || msg == NULL)
+    {
+        fprintf(stderr, "ERROR: neither queue nor message can be null\n");
+        tmr.kernel_lock = 0;
+        return -1;
+    }
+
+    if (sem_down(&queue->send))
+    {
+        tmr.kernel_lock = 0;
+        return -1;
+    }
+
+    tmr.kernel_lock = 1;
+
+    message_t *m;
+
+    if (! (m = malloc(sizeof(message_t))))
+    {
+        fprintf(stderr, "ERROR: failed to alloc message struct\n");
+        tmr.kernel_lock = 0;
+        return -1;
+    }
+
+    if (! (m->msg = malloc(queue->msg_size)))
+    {
+        fprintf(stderr, "ERROR: failed to alloc message buffer\n");
+        free(m);
+        tmr.kernel_lock = 0;
+        return -1;
+    }
+    m->next = NULL;
+    m->prev = NULL;
+
+    bcopy(msg, m->msg, queue->msg_size);
+    
+    queue_append(&queue->messages, (queue_t *)m);
+
+    sem_up(&queue->recv);
+
+    tmr.kernel_lock = 0;
+
+    return 0;
+}
+
+// recebe uma mensagem da fila
+int mqueue_recv (mqueue_t *queue, void *msg)
+{
+    tmr.kernel_lock = 1;
+
+    if (queue == NULL)
+    {
+        fprintf(stderr, "ERROR: queue can't be null\n");
+        tmr.kernel_lock = 0;
+        return -1;
+    }
+
+    if (sem_down(&queue->recv))
+    {
+        tmr.kernel_lock = 0;
+        return -1;
+    }
+
+    tmr.kernel_lock = 1;
+
+    message_t *m;
+
+    m = (message_t *)queue->messages;
+    
+    bcopy(m->msg, msg, queue->msg_size);
+
+    queue_remove(&queue->messages, (queue_t *)m);
+
+    free(m->msg);
+    free(m);
+
+    sem_up(&queue->send);
+
+    tmr.kernel_lock = 0;
+
+    return 0;
+}
+
+// destroi a fila, liberando as tarefas bloqueadas
+int mqueue_destroy (mqueue_t *queue) 
+{
+    tmr.kernel_lock = 1;
+
+    if (queue == NULL)
+    {
+        fprintf(stderr, "ERROR: queue can't be null\n");
+        tmr.kernel_lock = 0;
+        return -1;
+    }
+
+    if (sem_destroy(&queue->send) || sem_destroy(&queue->recv))
+    {
+        fprintf(stderr, "ERROR: failed to destroy semaphores from mqueue\n");
+        tmr.kernel_lock = 0;
+        return -1;
+    }
+
+    tmr.kernel_lock = 1;
+
+    message_t *m;
+
+    for (m = (message_t*)queue->messages; queue_size(queue->messages); m = (message_t*)queue->messages) 
+    {
+        queue_remove(&queue->messages, (queue_t *)m);
+        free(m->msg);
+        free(m);
+    }
+
+    tmr.kernel_lock = 0;
+
+    return 0;
+}
+
+// informa o número de mensagens atualmente na fila
+int mqueue_msgs (mqueue_t *queue)
+{
+    if (! queue)
+        return -1;
+
+    return queue_size(queue->messages);
 }

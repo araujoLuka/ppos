@@ -18,6 +18,7 @@
 #include <stdlib.h>
 #include <signal.h>
 #include <sys/time.h>
+#include <strings.h>
 
 #ifdef _WIN32 
     #include <Windows.h>
@@ -65,7 +66,7 @@ typedef struct
     int counter;        // contador que controla o semaforo
     queue_t *tasks;     // fila de tarfeas paradas no semaforo
     int in_use;         // identifica se o semaforo esta sendo usado no momento
-    // usado para busy waiting
+    int destroied;      // identifica se o semaforo foi destruido
 } semaphore_t ;
 
 // estrutura que define um mutex
@@ -80,10 +81,21 @@ typedef struct
   // preencher quando necessário
 } barrier_t ;
 
-// estrutura que define uma fila de mensagens
-typedef struct
+// estrutura que define uma mensagem
+typedef struct message_t
 {
-  // preencher quando necessário
+    struct message_t *prev, *next;
+    void *msg;
+} message_t ;
+
+// estrutura que define uma fila de mensagens
+typedef struct mqueue_t
+{
+    semaphore_t send;
+    semaphore_t recv;
+    int max_msg;
+    int msg_size;
+    queue_t *messages;
 } mqueue_t ;
 
 // Variaveis globais ================================================

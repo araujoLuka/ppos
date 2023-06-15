@@ -11,6 +11,7 @@
 
 # Variaveis make
 CFLAGS = -Wall -g
+LDLIBS = -lm
 OBJECTS = queue.o ppos_core.o
 PROGRAMS = $(patsubst %.c, %, $(wildcard pingpong*.c))
 TESTS = $(patsubst %.c, %, $(wildcard tests/*.c))
